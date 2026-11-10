@@ -3,6 +3,7 @@
 'use strict';
 
 /* ================= Configuração ================= */
+const APP_VERSION = '1.2.0';
 const CFG = {
   sat: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   ref: [
@@ -608,13 +609,13 @@ function monthsBetween(a, b) {
   return out;
 }
 // Baixa NDVI de várias fazendas e meses. Pula o que já existe (menos o mês corrente, que pode ter cena nova).
-async function runNdvi(farms, months, report, ctl) {
+async function runNdvi(farms, months, report, ctl, refresh = true) {
   await loadScript('vendor/geotiff.js');
   const st = { ok: 0, skip: 0, none: 0, fail: 0 }, total = farms.length * months.length; let done = 0;
   const ub = farms.reduce((b, f) => [Math.min(b[0], f.bb[0]), Math.min(b[1], f.bb[1]), Math.max(b[2], f.bb[2]), Math.max(b[3], f.bb[3])], [180, 90, -180, -90]);
   for (const month of months) {
     if (ctl.stop) break;
-    const todo = farms.filter(f => month === curMonth() || !S.ndvi.get(f.key)?.has(month));
+    const todo = farms.filter(f => (refresh && month === curMonth()) || !S.ndvi.get(f.key)?.has(month));
     st.skip += farms.length - todo.length; done += farms.length - todo.length;
     if (!todo.length) { report(done, total, month, st); continue; }
     let items;
@@ -636,9 +637,9 @@ async function runNdvi(farms, months, report, ctl) {
   tiffCache.clear();
   return st;
 }
-function afterNdvi() {
+function afterNdvi(switchTheme = true) {
   applyNdviMonth();
-  if (ndviMonths().length) { S.theme = 'ndvi'; $('#theme').value = 'ndvi'; }
+  if (switchTheme && ndviMonths().length) { S.theme = 'ndvi'; $('#theme').value = 'ndvi'; }
   restyle(); showNdviOverlay(); renderFarms(); renderBI(); renderData();
 }
 const stText = st => `${st.ok} leituras novas, ${st.skip} já guardadas, ${st.none} sem cena limpa, ${st.fail} com falha`;
@@ -663,19 +664,54 @@ async function computeNDVI(key) {
 }
 // Todas as fazendas, período escolhido em Dados.
 const ND = { running: false, ctl: null, text: '', pct: 0, from: null, to: null };
-async function downloadAllNdvi() {
-  if (ND.running) return;
-  if (!navigator.onLine) return toast('Conecte-se à internet para baixar o NDVI.');
-  const months = monthsBetween(ND.from, ND.to), farms = [...S.farms.values()];
-  ND.running = true; ND.ctl = { stop: false }; ND.pct = 0; ND.text = 'Preparando…'; renderData();
+async function downloadAllNdvi(months = monthsBetween(ND.from, ND.to), refresh = true, auto = false) {
+  if (ND.running) return null;
+  if (!navigator.onLine) { if (!auto) toast('Conecte-se à internet para baixar o NDVI.'); return null; }
+  const farms = [...S.farms.values()], tag = auto ? 'Automático, ' : '';
+  let st = null;
+  ND.running = true; ND.ctl = { stop: false }; ND.pct = 0; ND.text = `${tag}preparando…`; renderData();
   try {
-    const st = await runNdvi(farms, months, (dn, tot, m, s) => {
-      ND.pct = dn / tot * 100; ND.text = `${mLabel(m)}: ${nf(dn)} de ${nf(tot)} fazendas-mês. ${stText(s)}.`;
+    st = await runNdvi(farms, months, (dn, tot, m, s) => {
+      ND.pct = dn / tot * 100; ND.text = `${tag}${mLabel(m)}: ${nf(dn)} de ${nf(tot)} fazendas-mês. ${stText(s)}.`;
       const b = $('#nd-bar'); if (b) { b.style.width = `${ND.pct}%`; $('#nd-text').textContent = ND.text; }
-    }, ND.ctl);
-    ND.text = `${ND.ctl.stop ? 'Interrompido' : 'Concluído'}: ${stText(st)}.`;
+    }, ND.ctl, refresh);
+    ND.text = `${tag}${ND.ctl.stop ? 'interrompido' : 'concluído'} em ${new Date().toLocaleString('pt-BR')}: ${stText(st)}.`;
   } catch (e) { console.error(e); ND.text = `Download interrompido por erro (${e.message || 'rede'}). O que já foi lido está guardado.`; }
-  ND.running = false; afterNdvi();
+  ND.running = false; afterNdvi(!auto);
+  return st;
+}
+/* ---- NDVI automático ao abrir o app ---- */
+const AUTO = { on: true, wifi: true, last: 0, refresh: 0 };
+const DAY = 864e5;
+const isPhone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+// true = Wi-Fi/cabo, false = dados móveis ou economia de dados, null = o aparelho não informa (iPhone).
+function wifiState() {
+  const c = navigator.connection;
+  if (c?.saveData) return false;
+  if (c?.type) return ['wifi', 'ethernet'].includes(c.type);
+  return isPhone ? null : true;
+}
+async function autoNdvi() {
+  if (!AUTO.on || ND.running || !navigator.onLine || !S.feats.length) return;
+  if (AUTO.wifi && wifiState() !== true) return;
+  const now = Date.now();
+  if (now - AUTO.last < DAY) return;                 // no máximo uma busca por dia
+  const refresh = now - AUTO.refresh > 5 * DAY;      // refaz o mês corrente a cada 5 dias (revisita do Sentinel-2)
+  const d = new Date(); d.setMonth(d.getMonth() - 1);
+  AUTO.last = now; if (refresh) AUTO.refresh = now;
+  await DB.set('kv', 'auto', AUTO).catch(() => {});
+  const st = await downloadAllNdvi(monthsBetween(d.toISOString().slice(0, 7), curMonth()), refresh, true);
+  if (!st || (st.fail && !st.ok && !st.skip)) { AUTO.last = 0; if (refresh) AUTO.refresh = 0; await DB.set('kv', 'auto', AUTO).catch(() => {}); }
+  else if (st.ok) toast(`NDVI atualizado sozinho: ${st.ok} leituras novas.`, 4500);
+}
+/* ---- Atualização do app ---- */
+async function refreshApp() {
+  if (!navigator.onLine) return toast('Sem internet não dá para buscar a versão nova. Tente de novo com sinal.', 5000);
+  try {
+    for (const k of await caches.keys()) if (k !== 'mgeo-tiles') await caches.delete(k);
+    for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+  } catch (e) { console.warn(e); }
+  location.reload();
 }
 function exportNdvi() {
   const ms = ndviMonths(), cols = ['fid', 'id', 'fa', 'fazenda', 'talhao', 'area_ha', 'variedade', 'corte', ...ms];
@@ -801,6 +837,9 @@ async function renderData() {
         <button class="btn" data-act="exp-ndvi" ${nRec ? '' : 'disabled'}>Exportar NDVI mensal (CSV)</button>
         <button class="btn" data-act="clear-ndvi" ${nRec && !ND.running ? '' : 'disabled'}>Apagar NDVI</button>
       </div>
+      <label class="check" style="margin-top:12px"><input type="checkbox" id="auto-on" ${AUTO.on ? 'checked' : ''}> Baixar sozinho ao abrir o app (mês atual e anterior)</label>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="auto-wifi" ${AUTO.wifi ? 'checked' : ''} ${AUTO.on ? '' : 'disabled'}> Só no Wi-Fi</label>
+      <p class="muted" style="margin-top:8px">${!AUTO.on ? 'Automático desligado.' : AUTO.wifi && wifiState() === null ? 'Este aparelho não informa se está no Wi-Fi. Para baixar sozinho aqui, desmarque “Só no Wi-Fi”.' : AUTO.wifi && wifiState() === false ? 'Fora do Wi-Fi agora: o automático espera.' : AUTO.last ? `Última busca automática: ${new Date(AUTO.last).toLocaleString('pt-BR')}. A próxima sai depois de 24 h.` : 'A busca automática roda alguns segundos depois de abrir o app com internet.'}</p>
       ${ND.text ? `<p class="muted" id="nd-text" style="margin-top:10px">${esc(ND.text)}</p><div class="progress"><i id="nd-bar" style="width:${ND.pct}%"></i></div>` : ''}</div>
     <div class="box"><h2>Base de talhões</h2>
       <p class="muted">${nf(S.feats.length)} talhões em ${S.farms.size} fazendas. Exporte com as alterações aplicadas para abrir no QGIS, ou importe uma base nova em GeoJSON.</p>
@@ -810,9 +849,11 @@ async function renderData() {
         <button class="btn" data-act="reset-base">Voltar à base original</button>
       </div></div>
     <div class="box"><h2>Uso offline</h2>
+      <p class="muted">Versão ${APP_VERSION}. Com internet, o app busca a versão nova sozinho toda vez que abre. Se algo parecer travado, “Atualizar app” limpa o cache e recarrega, sem apagar alterações de campo, NDVI nem satélite.</p>
       <p class="muted">O app e os talhões já funcionam sem sinal. Satélite: ${S.offline.size} fazenda(s) baixada(s). NDVI: ${S.ndvi.size} fazenda(s). ${use}</p>
       <div class="actions">
         ${installEvt ? '<button class="btn primary" data-act="install">Instalar o app</button>' : ''}
+        <button class="btn" data-act="refresh-app">Atualizar app e limpar cache</button>
         <button class="btn" data-act="clear-tiles">Apagar imagens de satélite</button>
       </div></div>
   </div>`;
@@ -880,6 +921,7 @@ function bind() {
     else if (a === 'ndvi-all') downloadAllNdvi();
     else if (a === 'ndvi-stop') { ND.ctl.stop = true; ND.text = 'Parando depois das leituras em andamento…'; renderData(); }
     else if (a === 'exp-ndvi') exportNdvi();
+    else if (a === 'refresh-app') refreshApp();
     else if (a === 'clear-ndvi' && confirm('Apagar todo o NDVI guardado neste aparelho? Será preciso baixar de novo.')) { await DB.clear('ndvi'); S.ndvi.clear(); ND.text = ''; afterNdvi(); toast('NDVI apagado.'); }
     else if (a === 'exp-base') exportBase();
     else if (a === 'imp-base') $('#file').click();
@@ -890,6 +932,12 @@ function bind() {
       await caches.delete('mgeo-tiles'); S.offline.clear(); await DB.set('kv', 'offline', []); renderData(); renderFarms(); toast('Imagens apagadas.');
     }
   });
+  $('#data').addEventListener('change', async e => {
+    if (e.target.id !== 'auto-on' && e.target.id !== 'auto-wifi') return;
+    AUTO[e.target.id === 'auto-on' ? 'on' : 'wifi'] = e.target.checked;
+    await DB.set('kv', 'auto', AUTO).catch(() => {}); renderData(); autoNdvi();
+  });
+  addEventListener('online', () => setTimeout(autoNdvi, 3000));
   $('#data').addEventListener('change', e => { if (e.target.id === 'nd-from') ND.from = e.target.value || ND.from; if (e.target.id === 'nd-to') ND.to = e.target.value || ND.to; });
   const reNdvi = () => { applyNdviMonth(); restyle(); showNdviOverlay(); if (S.selFarm && !sheet.hidden && !S.route) S.selFid ? openTalhao(S.selFid) : openFarm(S.selFarm, false); };
   $('#nd-month').onchange = e => { S.ndviMonth = e.target.value || null; reNdvi(); };
@@ -908,6 +956,7 @@ async function start() {
     for (const [k, v] of await DB.all('edits')) S.edits.set(k, v);
     for (const [, v] of await DB.all('ndvi')) if (v?.grid && v.month) putNdvi(v);
     S.offline = new Set(await DB.get('kv', 'offline') || []);
+    Object.assign(AUTO, await DB.get('kv', 'auto') || {});
   } catch (e) { console.warn('IndexedDB indisponível', e); }
   let fc = null;
   try { fc = await DB.get('kv', 'base'); } catch (e) { /* segue com a base do app */ }
@@ -917,8 +966,17 @@ async function start() {
   map.fitBounds([[all[1], all[0]], [all[3], all[2]]], { padding: [20, 20] });
   drawTalhoes(); renderFarms(); fillFilters(); renderBI(); renderData();
   if (!isMobile()) setTab('bi');
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW', e));
-  window.MGEO = { S, ND, downloadAllNdvi, computeNDVI, ndviMonths, toUTM, openFarm, openTalhao, openSurvey, setTab, tileList, map };
+  if ('serviceWorker' in navigator) {
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then(r => r.update().catch(() => {})).catch(e => console.warn('SW', e));
+    // Versão nova assumiu: recarrega sozinho, a não ser que alguém esteja no meio de um formulário ou download.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!had) return;
+      if ($('#survey') || ND.running) toast('Versão nova do app pronta. Ela entra na próxima abertura.', 5000); else location.reload();
+    });
+  }
+  setTimeout(autoNdvi, 4000);
+  window.MGEO = { S, ND, AUTO, autoNdvi, downloadAllNdvi, computeNDVI, ndviMonths, toUTM, openFarm, openTalhao, openSurvey, setTab, tileList, map };
 }
 start().catch(e => { console.error(e); toast('Não consegui carregar a base de talhões. Recarregue a página.', 8000); });
 })();

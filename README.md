@@ -33,7 +33,7 @@ e abra `http://localhost:8000`. (Abrir o `index.html` com duplo clique não func
 ## Atualizar a base
 
 - Pelo app: *Dados > Importar base* (GeoJSON de polígonos, WGS84, mesmos campos da base exportada).
-- No repositório: substitua `data/talhoes.geojson` e aumente o número em `mgeo-shell-v2` em `sw.js` para os aparelhos baixarem a versão nova.
+- No repositório: substitua `data/talhoes.geojson`. Os aparelhos pegam a versão nova sozinhos na próxima abertura com internet (o app sempre consulta a rede antes do cache). Se algum ficar teimoso: *Dados > Atualizar app e limpar cache*.
 
 Campos: `fid, id, fa, assoc, faz, mun, talhao, area, varied, plantio, dt_colh, corte, tecnico, usina, notas, colhido, prod_t`.
 

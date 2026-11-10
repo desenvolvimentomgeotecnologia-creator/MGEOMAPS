@@ -1,5 +1,5 @@
 /* MGEO Campo — service worker: app offline + cache de imagens de satélite */
-const SHELL = 'mgeo-shell-v2';
+const SHELL = 'mgeo-shell-v3';
 const TILES = 'mgeo-tiles';
 const FILES = [
   './', 'index.html', 'css/app.css', 'js/app.js', 'manifest.webmanifest',
@@ -9,7 +9,11 @@ const FILES = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(SHELL)
+      .then(c => Promise.all(FILES.map(f => fetch(f, { cache: 'no-cache' }).then(r => { if (r.ok) return c.put(f, r); throw new Error(f); }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', e => {
@@ -43,18 +47,27 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Arquivos do app: responde do cache na hora e atualiza por trás.
+  // Arquivos do app: SEMPRE tenta a rede primeiro (ignorando o cache do navegador), para nunca
+  // ficar preso em versão antiga. Sem sinal, ou se a rede demorar mais de 4 s, usa a cópia guardada.
   if (url.origin === location.origin) {
-    e.respondWith(
-      caches.open(SHELL).then(async cache => {
-        const hit = await cache.match(req, { ignoreSearch: true });
-        const net = fetch(req).then(res => {
-          if (res.ok) cache.put(req, res.clone());
-          return res;
-        }).catch(() => null);
-        return hit || (await net) || new Response('Sem conexão', { status: 503 });
-      })
-    );
+    e.respondWith((async () => {
+      const cache = await caches.open(SHELL);
+      const net = fetch(req.url, { cache: 'no-cache' }).then(res => {
+        if (res.ok) cache.put(req.url, res.clone());
+        return res;
+      });
+      net.catch(() => {});
+      const slow = new Promise((_, rej) => setTimeout(() => rej(new Error('lento')), 4000));
+      try {
+        const res = await Promise.race([net, slow]);
+        if (res.ok) return res;
+        throw new Error('http ' + res.status);
+      } catch (err) {
+        const hit = await cache.match(req.url, { ignoreSearch: true }) || (req.mode === 'navigate' ? await cache.match('index.html') : null);
+        if (hit) return hit;
+        return net.catch(() => new Response('Sem conexão', { status: 503 }));
+      }
+    })());
   }
   // Rotas (OSRM) e Sentinel-2 passam direto para a rede.
 });
