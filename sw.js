@@ -1,5 +1,5 @@
 /* MGEO Campo — service worker: app offline + cache de imagens de satélite */
-const SHELL = 'mgeo-shell-v3';
+const SHELL = 'mgeo-shell-v4';
 const TILES = 'mgeo-tiles';
 const FILES = [
   './', 'index.html', 'css/app.css', 'js/app.js', 'manifest.webmanifest',

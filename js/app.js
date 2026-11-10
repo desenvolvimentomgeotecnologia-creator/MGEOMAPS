@@ -3,7 +3,7 @@
 'use strict';
 
 /* ================= Configuração ================= */
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const CFG = {
   sat: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   ref: [
@@ -29,7 +29,7 @@ const SAFRA_ATUAL = safraOf(today.toISOString().slice(0, 10));
 const isMobile = () => matchMedia('(max-width: 899px)').matches;
 const canEdit = () => isMobile() || matchMedia('(display-mode: standalone)').matches;
 
-let toastT;
+let toastT, reNdvi = () => {};
 function toast(msg, ms = 3200) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), ms);
@@ -68,7 +68,7 @@ const DB = {
 /* ================= Estado ================= */
 const S = {
   feats: [], byFid: new Map(), farms: new Map(), edits: new Map(), ndvi: new Map(), offline: new Set(),
-  theme: 'corte', label: 'talhao', ndviMonth: null, ndviN: 4, opacity: .55, selFarm: null, selFid: null, route: null, me: null
+  theme: 'corte', label: 'talhao', ndviMonth: null, ndviN: 4, ndviBasis: 'farm', ndviSmooth: true, prevTheme: 'corte', opacity: .55, selFarm: null, selFid: null, route: null, me: null
 };
 
 function farmKey(p) { return p.fa == null && !p.faz ? `|Sem cadastro (${p.mun || 'sem município'})` : `${p.fa ?? ''}|${p.faz ?? 'Sem nome'}`; }
@@ -137,14 +137,14 @@ const THEMES = {
     color: v => v === 'Colhido' ? '#23875a' : '#f6a81c' },
   tecnico: { title: 'Técnico', val: p => p.tecnico, color: (v, i) => TEC_COL[i % TEC_COL.length] },
   usina: { title: 'Usina', val: p => p.usina },
-  ndvi: { title: 'NDVI médio do talhão', ramp: true, val: p => p.ndvi ?? null }
+  ndvi: { title: 'NDVI', ramp: true, val: () => null }
 };
 const colhidoNaSafra = (p, safra) => safraOf(p.dt_colh) === safra || (safra === SAFRA_ATUAL && p.colhido && !p.dt_colh);
 
-let themeCats = new Map(), ndviBr = [];
+let themeCats = new Map();
 function buildCats() {
   const th = THEMES[S.theme]; themeCats = new Map();
-  if (th.ramp) { ndviBr = breaksOf(S.feats.map(f => f.properties.ndvi).filter(v => v != null).sort((a, b) => a - b), S.ndviN); return; }
+  if (th.ramp) return;
   const count = new Map();
   for (const f of S.feats) { const v = th.val(f.properties); if (v != null) count.set(v, (count.get(v) || 0) + 1); }
   const vals = [...count.keys()].sort(th.sort || ((a, b) => count.get(b) - count.get(a)));
@@ -153,18 +153,20 @@ function buildCats() {
 function colorOf(p) {
   const th = THEMES[S.theme], v = th.val(p);
   if (v == null) return GREY;
-  if (th.ramp) return NDVI_COLS[S.ndviN][classOf(v, ndviBr)];
   return themeCats.get(v)?.color || GREY;
 }
 function renderLegend() {
   const th = THEMES[S.theme]; let h = `<b>${esc(th.title)}</b>`;
   if (th.ramp) {
-    const n = S.feats.filter(f => f.properties.ndvi != null).length, N = S.ndviN, cols = NDVI_COLS[N];
-    if (!n) h += `<div style="white-space:normal">Nenhum NDVI baixado ainda. Vá em Dados para baixar de todas as fazendas.</div>`;
+    const ms = ndviMonths(), N = S.ndviN, cols = NDVI_COLS[N], share = N === 4 ? '25%' : '20%';
+    if (!ms.length) h = `<b>NDVI</b><div style="white-space:normal">Nenhum NDVI baixado ainda. Abra Dados e toque em “Baixar NDVI do período”.</div>`;
     else {
-      h = `<b>NDVI médio do talhão, ${mLabel(S.ndviMonth)}</b>`;
-      h += cols.map((c, k) => `<div><i style="background:${c}"></i>${k + 1}º ${NDVI_NAME[N]}: ${k === 0 ? `até ${nf(ndviBr[0], 2)}` : k === N - 1 ? `acima de ${nf(ndviBr[k - 1], 2)}` : `${nf(ndviBr[k - 1], 2)} a ${nf(ndviBr[k], 2)}`}</div>`).join('');
-      h += `<div><i style="background:${GREY}"></i>Sem leitura no mês</div>`;
+      const i = ms.indexOf(S.ndviMonth), gb = S.ndviBasis === 'all' ? globalBreaks(S.ndviMonth) : null;
+      h = `<div class="stepper"><button data-step="-1" ${i <= 0 ? 'disabled' : ''} aria-label="Mês anterior">‹</button><b>NDVI ${mLabel(S.ndviMonth)}</b><button data-step="1" ${i >= ms.length - 1 ? 'disabled' : ''} aria-label="Mês seguinte">›</button></div>`;
+      h += cols.map((c, k) => `<div><i style="background:${c}"></i>${gb
+        ? (k === 0 ? `até ${nf(gb[0], 2)}` : k === N - 1 ? `acima de ${nf(gb[k - 1], 2)}` : `${nf(gb[k - 1], 2)} a ${nf(gb[k], 2)}`)
+        : (k === 0 ? `${share} mais baixos` : k === N - 1 ? `${share} mais altos` : `${k + 1}º ${NDVI_NAME[N]}`)}</div>`).join('');
+      h += `<div class="muted" style="white-space:normal">${gb ? 'Mesmos cortes para todas as fazendas.' : `${N === 4 ? 'Quartis' : 'Quintis'} calculados dentro de cada fazenda.`}</div>`;
     }
   } else {
     const items = [...themeCats.entries()];
@@ -176,20 +178,24 @@ function renderLegend() {
 }
 
 /* ================= Mapa ================= */
-let map, lyr, labelLayer, refLayers, ndviOverlay, meMarker, routeLayer;
+let map, lyr, labelLayer, refLayers, meMarker, routeLayer;
+const ndOv = new Map();
 
 function initMap() {
   map = L.map('map', { preferCanvas: true, zoomControl: false, maxZoom: 20, attributionControl: true });
   map.attributionControl.setPrefix(false);
   L.tileLayer(CFG.sat, { maxNativeZoom: CFG.satMaxZoom, maxZoom: 20, crossOrigin: true, attribution: 'Imagem © Esri, Maxar, Earthstar Geographics' }).addTo(map);
   refLayers = L.layerGroup(CFG.ref.map(u => L.tileLayer(u, { maxNativeZoom: 15, maxZoom: 20, crossOrigin: true }))).addTo(map);
+  map.createPane('ndvi').style.zIndex = 350; // acima do satélite, abaixo dos contornos dos talhões
   routeLayer = L.layerGroup().addTo(map);
   labelLayer = L.layerGroup().addTo(map);
   map.on('moveend zoomend', drawLabels);
+  map.on('moveend', showNdviOverlay);
   map.on('click', () => { $('#layers').hidden = true; $('#btn-layers').classList.remove('on'); });
 }
 function styleOf(f) {
   const sel = f.properties.fid === S.selFid, inFarm = S.selFarm && farmKey(f.properties) === S.selFarm;
+  if (S.theme === 'ndvi') return { fillColor: '#000', fillOpacity: 0, color: sel ? '#fff' : inFarm ? '#ffd75e' : 'rgba(255,255,255,.9)', weight: sel ? 3.5 : inFarm ? 2.2 : 1 };
   return { fillColor: colorOf(f.properties), fillOpacity: S.opacity, color: sel ? '#fff' : inFarm ? '#ffd75e' : 'rgba(255,255,255,.75)', weight: sel ? 3.5 : inFarm ? 2 : .8 };
 }
 function drawTalhoes() {
@@ -220,10 +226,23 @@ function fitBB(bb) {
   const pad = isMobile() ? { paddingTopLeft: [30, 80], paddingBottomRight: [30, innerHeight * .5] } : { paddingTopLeft: [40, 40], paddingBottomRight: [430, 40] };
   map.fitBounds([[bb[1], bb[0]], [bb[3], bb[2]]], { ...pad, maxZoom: 17 });
 }
+// Modo NDVI: imagem classificada de TODAS as fazendas visíveis, no mês escolhido.
 function showNdviOverlay() {
-  if (ndviOverlay) { ndviOverlay.remove(); ndviOverlay = null; }
-  const nd = S.selFarm && S.ndvi.get(S.selFarm)?.get(S.ndviMonth);
-  if (nd && $('#tg-ndvi').checked) ndviOverlay = L.imageOverlay(ndviImage(nd).url, nd.bounds, { opacity: .95, interactive: false, className: 'ndvi-img' }).addTo(map);
+  const on = S.theme === 'ndvi' && S.ndviMonth, view = map.getBounds(), want = new Set();
+  if (on) for (const [key, m] of S.ndvi) {
+    const rec = m.get(S.ndviMonth);
+    if (!rec || !view.intersects(rec.bounds)) continue;
+    want.add(key);
+    const sig = ndviSig(rec); let o = ndOv.get(key);
+    if (o && o.sig !== sig) { o.layer.remove(); o = null; }
+    if (!o) ndOv.set(key, { sig, layer: L.imageOverlay(ndviImage(rec).url, rec.bounds, { pane: 'ndvi', interactive: false, className: 'ndvi-img' }).addTo(map) });
+  }
+  for (const [k, o] of ndOv) if (!want.has(k)) { o.layer.remove(); ndOv.delete(k); }
+}
+function setTheme(t) {
+  if (t !== 'ndvi') S.prevTheme = t;
+  S.theme = t; $('#theme').value = t; $('#btn-ndvi').classList.toggle('on', t === 'ndvi');
+  restyle(); showNdviOverlay();
 }
 
 /* ================= Folha: fazenda e talhão ================= */
@@ -259,7 +278,7 @@ function openFarm(key, fit = true) {
       <button class="btn" data-act="ndvi">${ICON.leaf}${ndAll ? 'Atualizar NDVI' : 'NDVI (6 meses)'}</button>
     </div>
     <div id="job"></div>
-    ${nd ? `<p class="muted">Imagem NDVI de ${dBR(nd.date)}, pintada pelos ${NDVI_NAME[S.ndviN]}s dos pixels desta fazenda (cortes em ${brText(ndviImage(nd).br)}).</p>` : ndAll ? `<p class="muted">Sem leitura limpa em ${mLabel(S.ndviMonth)} para esta fazenda. Troque o mês em Temas e rótulos.</p>` : ''}
+    ${nd ? `<p class="muted">Imagem NDVI de ${dBR(nd.date)}, ${S.ndviBasis === 'all' ? 'com os mesmos cortes de todas as fazendas' : `em ${NDVI_NAME[S.ndviN]}s desta fazenda`} (cortes em ${brText(ndviImage(nd).br)}).${S.theme === 'ndvi' ? '' : ' Toque num mês para ver a imagem.'}</p>` : ndAll ? `<p class="muted">Sem leitura limpa em ${mLabel(S.ndviMonth)} para esta fazenda. Toque em outro mês abaixo.</p>` : ''}
     ${ndAll ? `<table class="mini"><tr><th>Mês</th><th>Cena</th><th>NDVI médio</th><th>Talhões</th></tr>${[...ndAll.keys()].sort().reverse().map(m => { const r = ndAll.get(m); return `<tr data-month="${m}" class="${m === S.ndviMonth ? 'on' : ''}"><td>${mLabel(m)}</td><td>${dBR(r.date).slice(0, 5)}</td><td class="num">${nf(farmNdviMean(fm, r), 2)}</td><td>${Object.keys(r.means).length}</td></tr>`; }).join('')}</table>` : ''}
     <ul class="rows">${fm.feats.map(f => { const p = f.properties; return `
       <li><button data-fid="${p.fid}"><span class="t">T${p.talhao ?? '?'}</span>
@@ -510,16 +529,57 @@ function applyNdviMonth() {
 }
 function putNdvi(rec) { let m = S.ndvi.get(rec.key); if (!m) S.ndvi.set(rec.key, m = new Map()); m.set(rec.month, rec); }
 // Imagem da fazenda pintada pelas classes dos pixels DAQUELA fazenda naquele mês.
+const gbCache = new Map();
+// Cortes gerais do mês: quartis de todos os pixels de todas as fazendas (amostrados).
+function globalBreaks(month) {
+  const k = `${month}|${S.ndviN}|${[...S.ndvi.values()].reduce((n, m) => n + (m.has(month) ? 1 : 0), 0)}`;
+  if (gbCache.has(k)) return gbCache.get(k);
+  let total = 0; for (const m of S.ndvi.values()) { const r = m.get(month); if (r) total += r.grid.length; }
+  const step = Math.max(1, Math.floor(total / 400000)), vals = [];
+  for (const m of S.ndvi.values()) { const r = m.get(month); if (r) for (let i = 0; i < r.grid.length; i += step) if (r.grid[i] !== NODATA) vals.push(r.grid[i] / 1e4); }
+  const br = breaksOf(vals.sort((a, b) => a - b), S.ndviN);
+  gbCache.clear(); gbCache.set(k, br); return br;
+}
+const ndviSig = rec => `${S.ndviN}|${S.ndviBasis}|${S.ndviSmooth}|${S.ndviBasis === 'all' ? globalBreaks(rec.month).join() : ''}`;
+// Imagem em classes discretas. Suavização: média 5x5 antes de classificar + filtro de maioria 3x3 depois,
+// para formar zonas contínuas em vez de pixels soltos.
 function ndviImage(rec) {
-  const n = S.ndviN;
-  if (rec._img?.n === n) return rec._img;
-  const vals = Float32Array.from(rec.grid.filter(v => v !== NODATA), v => v / 1e4).sort();
-  const br = breaksOf(vals, n), cols = NDVI_COLS[n].map(hex2rgb);
-  const cv = document.createElement('canvas'); cv.width = rec.W; cv.height = rec.H;
-  const ctx = cv.getContext('2d'), im = ctx.createImageData(rec.W, rec.H);
-  for (let k = 0; k < rec.grid.length; k++) if (rec.grid[k] !== NODATA) { const c = cols[classOf(rec.grid[k] / 1e4, br)]; im.data[k * 4] = c[0]; im.data[k * 4 + 1] = c[1]; im.data[k * 4 + 2] = c[2]; im.data[k * 4 + 3] = 255; }
+  const sig = ndviSig(rec);
+  if (rec._img?.sig === sig) return rec._img;
+  const { W, H, grid } = rec, n = S.ndviN, len = W * H;
+  let val = new Float32Array(len);
+  for (let k = 0; k < len; k++) val[k] = grid[k] === NODATA ? NaN : grid[k] / 1e4;
+  if (S.ndviSmooth) {
+    const out = new Float32Array(len).fill(NaN);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (isNaN(val[y * W + x])) continue;
+      let s = 0, c = 0;
+      for (let dy = -2; dy <= 2; dy++) { const yy = y + dy; if (yy < 0 || yy >= H) continue;
+        for (let dx = -2; dx <= 2; dx++) { const xx = x + dx; if (xx < 0 || xx >= W) continue; const v = val[yy * W + xx]; if (v === v) { s += v; c++; } } }
+      out[y * W + x] = s / c;
+    }
+    val = out;
+  }
+  const br = S.ndviBasis === 'all' ? globalBreaks(rec.month) : breaksOf(Float32Array.from(val.filter(v => v === v)).sort(), n);
+  let cls = new Uint8Array(len).fill(255);
+  for (let k = 0; k < len; k++) if (val[k] === val[k]) cls[k] = classOf(val[k], br);
+  if (S.ndviSmooth) {
+    const out = cls.slice(), cnt = new Uint8Array(n);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const me = cls[y * W + x]; if (me === 255) continue;
+      cnt.fill(0);
+      for (let dy = -1; dy <= 1; dy++) { const yy = y + dy; if (yy < 0 || yy >= H) continue;
+        for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx < 0 || xx >= W) continue; const c = cls[yy * W + xx]; if (c !== 255) cnt[c]++; } }
+      let best = me; for (let c = 0; c < n; c++) if (cnt[c] > cnt[best]) best = c;
+      out[y * W + x] = best;
+    }
+    cls = out;
+  }
+  const cols = NDVI_COLS[n].map(hex2rgb), cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'), im = ctx.createImageData(W, H);
+  for (let k = 0; k < len; k++) if (cls[k] !== 255) { const c = cols[cls[k]]; im.data[k * 4] = c[0]; im.data[k * 4 + 1] = c[1]; im.data[k * 4 + 2] = c[2]; im.data[k * 4 + 3] = 255; }
   ctx.putImageData(im, 0, 0);
-  return rec._img = { n, url: cv.toDataURL('image/png'), br };
+  return rec._img = { sig, url: cv.toDataURL('image/png'), br };
 }
 function farmNdviMean(fm, rec) {
   let s = 0, a = 0;
@@ -639,7 +699,7 @@ async function runNdvi(farms, months, report, ctl, refresh = true) {
 }
 function afterNdvi(switchTheme = true) {
   applyNdviMonth();
-  if (switchTheme && ndviMonths().length) { S.theme = 'ndvi'; $('#theme').value = 'ndvi'; }
+  if (switchTheme && ndviMonths().length) { S.theme = 'ndvi'; $('#theme').value = 'ndvi'; $('#btn-ndvi').classList.add('on'); }
   restyle(); showNdviOverlay(); renderFarms(); renderBI(); renderData();
 }
 const stText = st => `${st.ok} leituras novas, ${st.skip} já guardadas, ${st.none} sem cena limpa, ${st.fail} com falha`;
@@ -796,9 +856,9 @@ function renderBI() {
     </div>
     ${prod ? '' : '<p class="note" style="margin-top:10px">A base ainda não tem toneladas. Preencha “Produção” no levantamento do talhão e o TCH aparece aqui sozinho.</p>'}
     ${(() => { const st = ndviMonthly(rows); if (!st.length) return ''; return `<h2>NDVI por mês</h2>
-      <div class="boxes">${st.map(s => `<div><em>${nf(s.mean, 2)}</em><b><i style="bottom:${s.q1 * 100}%;height:${Math.max(1.5, (s.q3 - s.q1) * 100)}%"></i><u style="bottom:${s.med * 100}%"></u></b><span>${mLabel(s.m)}</span></div>`).join('')}</div>
-      <p class="muted">Caixa: do 1º ao 3º quartil dos talhões. Traço: mediana. Número: média ponderada pela área.</p>
-      <table class="mini"><tr><th>Mês</th><th>Talhões</th><th>Média</th><th>Q1</th><th>Mediana</th><th>Q3</th></tr>${st.slice().reverse().map(s => `<tr><td>${mLabel(s.m)}</td><td>${nf(s.n)}</td><td class="num">${nf(s.mean, 2)}</td><td>${nf(s.q1, 2)}</td><td>${nf(s.med, 2)}</td><td>${nf(s.q3, 2)}</td></tr>`).join('')}</table>`; })()}
+      <div class="months ndvi">${st.map(s => `<div><em>${nf(s.mean, 2)}</em><i style="height:calc((100% - 40px) * ${s.mean.toFixed(4)})"></i><span>${mLabel(s.m)}</span></div>`).join('')}</div>
+      <p class="muted">NDVI médio dos talhões, ponderado pela área. Escala de 0 a 1.</p>
+      <table class="mini"><tr><th>Mês</th><th>Talhões</th><th>Média</th><th>Menor</th><th>Maior</th></tr>${st.slice().reverse().map(s => `<tr><td>${mLabel(s.m)}</td><td>${nf(s.n)}</td><td class="num">${nf(s.mean, 2)}</td><td>${nf(s.min, 2)}</td><td>${nf(s.max, 2)}</td></tr>`).join('')}</table>`; })()}
     <h2>Área colhida por mês</h2>
     <div class="months">${months.map(m => { const v = byM.get(m) || 0; return `<div><em>${v ? nf(v) : ''}</em><i style="height:calc((100% - 40px) * ${(v / maxM).toFixed(4)})"></i><span>${MES[+m.slice(5) - 1]}</span></div>`; }).join('')}</div>
     <h2>Área colhida por usina</h2>${hbars(groupSum(colh, p => p.usina || 'Não informada', p => p.area), { cls: 'amber' })}
@@ -893,11 +953,16 @@ function bind() {
   $('#farm-list').addEventListener('click', e => { const b = e.target.closest('[data-farm]'); if (b) openFarm(b.dataset.farm); });
   ['#f-safra', '#f-tec', '#f-mun'].forEach(s => $(s).onchange = renderBI);
   $('#btn-layers').onclick = e => { const p = $('#layers'); p.hidden = !p.hidden; e.currentTarget.classList.toggle('on', !p.hidden); };
-  $('#theme').onchange = e => { S.theme = e.target.value; restyle(); };
+  $('#theme').onchange = e => setTheme(e.target.value);
+  $('#btn-ndvi').onclick = () => {
+    if (S.theme === 'ndvi') return setTheme(S.prevTheme);
+    setTheme('ndvi');
+    if (!ndviMonths().length) toast('Ainda não há NDVI guardado. Abra Dados e toque em “Baixar NDVI do período”.', 5000);
+  };
+  $('#legend').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (!b) return; const ms = ndviMonths(); S.ndviMonth = ms[ms.indexOf(S.ndviMonth) + +b.dataset.step] || S.ndviMonth; reNdvi(); });
   $('#label').onchange = e => { S.label = e.target.value; drawLabels(); };
   $('#opac').oninput = e => { S.opacity = 1 - e.target.value / 100; lyr.setStyle(styleOf); };
   $('#tg-ref').onchange = e => e.target.checked ? refLayers.addTo(map) : refLayers.remove();
-  $('#tg-ndvi').onchange = showNdviOverlay;
   $('#btn-gps').onclick = async () => {
     try { const ll = await getPos(); showMe(ll); map.setView([ll[1], ll[0]], Math.max(map.getZoom(), 15)); }
     catch (e) { toast('Não consegui ler sua localização. Libere o GPS para este site.'); }
@@ -939,10 +1004,12 @@ function bind() {
   });
   addEventListener('online', () => setTimeout(autoNdvi, 3000));
   $('#data').addEventListener('change', e => { if (e.target.id === 'nd-from') ND.from = e.target.value || ND.from; if (e.target.id === 'nd-to') ND.to = e.target.value || ND.to; });
-  const reNdvi = () => { applyNdviMonth(); restyle(); showNdviOverlay(); if (S.selFarm && !sheet.hidden && !S.route) S.selFid ? openTalhao(S.selFid) : openFarm(S.selFarm, false); };
+  reNdvi = () => { applyNdviMonth(); restyle(); showNdviOverlay(); if (S.selFarm && !sheet.hidden && !S.route) S.selFid ? openTalhao(S.selFid) : openFarm(S.selFarm, false); };
   $('#nd-month').onchange = e => { S.ndviMonth = e.target.value || null; reNdvi(); };
   $('#nd-n').onchange = e => { S.ndviN = +e.target.value; reNdvi(); };
-  sheet.addEventListener('click', e => { const tr = e.target.closest('tr[data-month]'); if (tr) { S.ndviMonth = tr.dataset.month; reNdvi(); } });
+  $('#nd-basis').onchange = e => { S.ndviBasis = e.target.value; reNdvi(); };
+  $('#nd-smooth').onchange = e => { S.ndviSmooth = e.target.checked; reNdvi(); };
+  sheet.addEventListener('click', e => { const tr = e.target.closest('tr[data-month]'); if (tr) { S.ndviMonth = tr.dataset.month; if (S.theme !== 'ndvi') setTheme('ndvi'); reNdvi(); } });
   $('#file').onchange = e => { if (e.target.files[0]) importBase(e.target.files[0]); e.target.value = ''; };
   const net = () => { const n = $('#net'); n.textContent = navigator.onLine ? 'online' : 'offline'; n.classList.toggle('off', !navigator.onLine); };
   addEventListener('online', net); addEventListener('offline', net); net();

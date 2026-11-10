@@ -57,6 +57,7 @@
 
   <div class="fabs">
     <button id="btn-layers" title="Temas e rótulos" aria-label="Temas e rótulos"><svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg></button>
+    <button id="btn-ndvi" title="Modo NDVI: imagem de todas as fazendas" aria-label="Modo NDVI"><svg viewBox="0 0 24 24"><path d="M5 19c0-9 5-14 15-14 0 10-5 15-14 15M5 19l8-8"/></svg></button>
     <button id="btn-gps" title="Onde estou" aria-label="Onde estou"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg></button>
   </div>
 
@@ -69,7 +70,7 @@
         <option value="colhido">Colhido na safra atual</option>
         <option value="tecnico">Técnico</option>
         <option value="usina">Usina</option>
-        <option value="ndvi">NDVI</option>
+        <option value="ndvi">NDVI (imagem de todas as fazendas)</option>
       </select>
     </label>
     <label>Rótulo
@@ -89,8 +90,14 @@
         <option value="5">Quintis (5 classes, com amarelo)</option>
       </select>
     </label>
+    <label>Cortes das classes
+      <select id="nd-basis">
+        <option value="farm">Dentro de cada fazenda</option>
+        <option value="all">Iguais para todas as fazendas</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="nd-smooth" checked> Suavizar zonas do NDVI</label>
     <label class="check"><input type="checkbox" id="tg-ref" checked> Nomes e estradas</label>
-    <label class="check"><input type="checkbox" id="tg-ndvi" checked> Imagem NDVI das fazendas</label>
     <label>Transparência dos talhões <input type="range" id="opac" min="0" max="90" value="55"></label>
   </div>
 
