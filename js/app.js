@@ -12,7 +12,7 @@ const CFG = {
   satMaxZoom: 17,
   osrm: 'https://router.project-osrm.org/route/v1/driving/',
   stac: 'https://earth-search.aws.element84.com/v1/search',
-  maxCloud: 20,
+  maxCloud: 40,
   labelZoom: 13
 };
 
@@ -67,7 +67,7 @@ const DB = {
 /* ================= Estado ================= */
 const S = {
   feats: [], byFid: new Map(), farms: new Map(), edits: new Map(), ndvi: new Map(), offline: new Set(),
-  theme: 'corte', label: 'talhao', opacity: .55, selFarm: null, selFid: null, route: null, me: null
+  theme: 'corte', label: 'talhao', ndviMonth: null, ndviN: 4, opacity: .55, selFarm: null, selFid: null, route: null, me: null
 };
 
 function farmKey(p) { return p.fa == null && !p.faz ? `|Sem cadastro (${p.mun || 'sem município'})` : `${p.fa ?? ''}|${p.faz ?? 'Sem nome'}`; }
@@ -116,21 +116,10 @@ function indexData(fc) {
   for (const fm of S.farms.values()) {
     fm.feats.sort((a, b) => (a.properties.talhao ?? 999) - (b.properties.talhao ?? 999));
     fm.c = [(fm.bb[0] + fm.bb[2]) / 2, (fm.bb[1] + fm.bb[3]) / 2];
-    const nd = S.ndvi.get(fm.key);
-    if (nd) for (const f of fm.feats) f.properties.ndvi = nd.means[f.properties.fid] ?? null;
   }
 }
 
 /* ================= Temas (cores) ================= */
-const NDVI_STOPS = [[.1, [140, 81, 10]], [.3, [246, 194, 68]], [.5, [217, 239, 139]], [.7, [102, 189, 99]], [.9, [26, 104, 55]]];
-function ndviRGB(v) {
-  if (v <= NDVI_STOPS[0][0]) return NDVI_STOPS[0][1];
-  for (let i = 1; i < NDVI_STOPS.length; i++) if (v <= NDVI_STOPS[i][0]) {
-    const [a, ca] = NDVI_STOPS[i - 1], [b, cb] = NDVI_STOPS[i], t = (v - a) / (b - a);
-    return ca.map((c, k) => Math.round(c + (cb[k] - c) * t));
-  }
-  return NDVI_STOPS[NDVI_STOPS.length - 1][1];
-}
 const GREY = '#9aa0a6';
 const CORTE_RAMP = ['#fff3c4', '#ffd75e', '#f6a81c', '#e57f0c', '#c9510c', '#9c2f12', '#6e1b1b', '#4a1230', '#2e0d3a'];
 const TEC_COL = ['#f6a81c', '#2a9df4', '#e0457b', '#3cb878', '#9b6bdf'];
@@ -151,10 +140,10 @@ const THEMES = {
 };
 const colhidoNaSafra = (p, safra) => safraOf(p.dt_colh) === safra || (safra === SAFRA_ATUAL && p.colhido && !p.dt_colh);
 
-let themeCats = new Map();
+let themeCats = new Map(), ndviBr = [];
 function buildCats() {
   const th = THEMES[S.theme]; themeCats = new Map();
-  if (th.ramp) return;
+  if (th.ramp) { ndviBr = breaksOf(S.feats.map(f => f.properties.ndvi).filter(v => v != null).sort((a, b) => a - b), S.ndviN); return; }
   const count = new Map();
   for (const f of S.feats) { const v = th.val(f.properties); if (v != null) count.set(v, (count.get(v) || 0) + 1); }
   const vals = [...count.keys()].sort(th.sort || ((a, b) => count.get(b) - count.get(a)));
@@ -163,15 +152,19 @@ function buildCats() {
 function colorOf(p) {
   const th = THEMES[S.theme], v = th.val(p);
   if (v == null) return GREY;
-  if (th.ramp) { const c = ndviRGB(v); return `rgb(${c})`; }
+  if (th.ramp) return NDVI_COLS[S.ndviN][classOf(v, ndviBr)];
   return themeCats.get(v)?.color || GREY;
 }
 function renderLegend() {
   const th = THEMES[S.theme]; let h = `<b>${esc(th.title)}</b>`;
   if (th.ramp) {
-    const n = S.feats.filter(f => f.properties.ndvi != null).length;
-    h += `<div class="ramp"></div><div class="ramp-l"><span>0,1</span><span>0,5</span><span>0,9</span></div>` +
-      `<div><i style="background:${GREY}"></i>${n ? 'Sem leitura' : 'Abra uma fazenda e toque em NDVI'}</div>`;
+    const n = S.feats.filter(f => f.properties.ndvi != null).length, N = S.ndviN, cols = NDVI_COLS[N];
+    if (!n) h += `<div style="white-space:normal">Nenhum NDVI baixado ainda. Vá em Dados para baixar de todas as fazendas.</div>`;
+    else {
+      h = `<b>NDVI médio do talhão, ${mLabel(S.ndviMonth)}</b>`;
+      h += cols.map((c, k) => `<div><i style="background:${c}"></i>${k + 1}º ${NDVI_NAME[N]}: ${k === 0 ? `até ${nf(ndviBr[0], 2)}` : k === N - 1 ? `acima de ${nf(ndviBr[k - 1], 2)}` : `${nf(ndviBr[k - 1], 2)} a ${nf(ndviBr[k], 2)}`}</div>`).join('');
+      h += `<div><i style="background:${GREY}"></i>Sem leitura no mês</div>`;
+    }
   } else {
     const items = [...themeCats.entries()];
     h += items.slice(0, 22).map(([v, c]) => `<div><i style="background:${c.color}"></i>${esc(th.name ? th.name(v) : v)}</div>`).join('');
@@ -228,8 +221,8 @@ function fitBB(bb) {
 }
 function showNdviOverlay() {
   if (ndviOverlay) { ndviOverlay.remove(); ndviOverlay = null; }
-  const nd = S.selFarm && S.ndvi.get(S.selFarm);
-  if (nd && $('#tg-ndvi').checked) ndviOverlay = L.imageOverlay(nd.img, nd.bounds, { opacity: .92, interactive: false }).addTo(map);
+  const nd = S.selFarm && S.ndvi.get(S.selFarm)?.get(S.ndviMonth);
+  if (nd && $('#tg-ndvi').checked) ndviOverlay = L.imageOverlay(ndviImage(nd).url, nd.bounds, { opacity: .95, interactive: false, className: 'ndvi-img' }).addTo(map);
 }
 
 /* ================= Folha: fazenda e talhão ================= */
@@ -250,7 +243,7 @@ function openFarm(key, fit = true) {
   const fm = S.farms.get(key); if (!fm) return;
   S.selFarm = key; S.selFid = null; setTab('map');
   const vars = [...new Set(fm.feats.map(f => f.properties.varied).filter(Boolean))];
-  const nd = S.ndvi.get(key), off = S.offline.has(key);
+  const ndAll = S.ndvi.get(key), nd = ndAll?.get(S.ndviMonth), off = S.offline.has(key);
   openSheet(`
     <div class="sheet-head"><h2>${esc(fm.faz)}</h2><button class="x" data-act="close" aria-label="Fechar">✕</button></div>
     <p class="muted">${esc(fm.assoc || 'Sem associado')} — ${esc(fm.mun || '')}${fm.fa ? ` — FA ${fm.fa}` : ''}</p>
@@ -262,10 +255,11 @@ function openFarm(key, fit = true) {
     <div class="actions">
       <button class="btn primary" data-act="route">${ICON.route}Traçar rota</button>
       <button class="btn" data-act="offline">${ICON.down}${off ? 'Satélite baixado' : 'Baixar satélite'}</button>
-      <button class="btn" data-act="ndvi">${ICON.leaf}${nd ? 'Atualizar NDVI' : 'NDVI'}</button>
+      <button class="btn" data-act="ndvi">${ICON.leaf}${ndAll ? 'Atualizar NDVI' : 'NDVI (6 meses)'}</button>
     </div>
     <div id="job"></div>
-    ${nd ? `<p class="muted">NDVI Sentinel-2 de ${dBR(nd.date)}, ${nf(nd.cloud)}% de nuvens na cena.</p>` : ''}
+    ${nd ? `<p class="muted">Imagem NDVI de ${dBR(nd.date)}, pintada pelos ${NDVI_NAME[S.ndviN]}s dos pixels desta fazenda (cortes em ${brText(ndviImage(nd).br)}).</p>` : ndAll ? `<p class="muted">Sem leitura limpa em ${mLabel(S.ndviMonth)} para esta fazenda. Troque o mês em Temas e rótulos.</p>` : ''}
+    ${ndAll ? `<table class="mini"><tr><th>Mês</th><th>Cena</th><th>NDVI médio</th><th>Talhões</th></tr>${[...ndAll.keys()].sort().reverse().map(m => { const r = ndAll.get(m); return `<tr data-month="${m}" class="${m === S.ndviMonth ? 'on' : ''}"><td>${mLabel(m)}</td><td>${dBR(r.date).slice(0, 5)}</td><td class="num">${nf(farmNdviMean(fm, r), 2)}</td><td>${Object.keys(r.means).length}</td></tr>`; }).join('')}</table>` : ''}
     <ul class="rows">${fm.feats.map(f => { const p = f.properties; return `
       <li><button data-fid="${p.fid}"><span class="t">T${p.talhao ?? '?'}</span>
         <span>${esc(p.varied || 'Sem variedade')}<small>${p.corte != null ? esc(THEMES.corte.name(p.corte)) : 'corte não informado'}${p.ndvi != null ? ` — NDVI ${nf(p.ndvi, 2)}` : ''}</small></span>
@@ -296,7 +290,8 @@ function openTalhao(fid) {
       <dt>Produção</dt><dd>${p.prod_t ? `${nf(p.prod_t, 1)} t (${nf(tch, 1)} t/ha)` : '–'}</dd>
       <dt>Usina</dt><dd>${esc(p.usina || '–')}</dd>
       <dt>Técnico</dt><dd>${esc(p.tecnico || '–')}</dd>
-      <dt>NDVI médio</dt><dd>${p.ndvi != null ? nf(p.ndvi, 2) : '–'}</dd>
+      <dt>NDVI ${S.ndviMonth ? mLabel(S.ndviMonth) : 'médio'}</dt><dd>${p.ndvi != null ? nf(p.ndvi, 2) : '–'}</dd>
+      ${(() => { const fmN = S.ndvi.get(S.selFarm); if (!fmN) return ''; const hs = [...fmN.keys()].sort().filter(m => fmN.get(m).means[fid] != null); return hs.length > 1 ? `<dt>NDVI por mês</dt><dd>${hs.map(m => `${mLabel(m)} ${nf(fmN.get(m).means[fid], 2)}`).join('<br>')}</dd>` : ''; })()}
       ${p.notas ? `<dt>Notas</dt><dd>${esc(p.notas)}</dd>` : ''}
     </dl>
     ${canEdit() ? `<button class="btn primary wide" data-act="edit">${ICON.edit}Atualizar dados do talhão</button>`
@@ -493,77 +488,214 @@ function toUTM(lon, lat, zone) {
 function loadScript(src) {
   return new Promise((res, rej) => { if (window.GeoTIFF) return res(); const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.append(s); });
 }
-async function readBand(href, zone, bb) {
-  const tiff = await GeoTIFF.fromUrl(href), img = await tiff.getImage();
-  const [ox, oy] = img.getOrigin(), [rx, ry] = img.getResolution(), res = Math.abs(rx);
-  const cs = [[bb[0], bb[1]], [bb[0], bb[3]], [bb[2], bb[1]], [bb[2], bb[3]]].map(c => toUTM(c[0], c[1], zone));
-  const x0 = Math.max(0, Math.floor((Math.min(...cs.map(c => c[0])) - ox) / res) - 1), x1 = Math.min(img.getWidth(), Math.ceil((Math.max(...cs.map(c => c[0])) - ox) / res) + 1);
-  const y0 = Math.max(0, Math.floor((oy - Math.max(...cs.map(c => c[1]))) / Math.abs(ry)) - 1), y1 = Math.min(img.getHeight(), Math.ceil((oy - Math.min(...cs.map(c => c[1]))) / Math.abs(ry)) + 1);
-  if (x1 <= x0 || y1 <= y0) throw new Error('fora da cena');
-  const [data] = await img.readRasters({ window: [x0, y0, x1, y1], samples: [0] });
-  return { data, w: x1 - x0, h: y1 - y0, ox: ox + x0 * res, oy: oy - y0 * Math.abs(ry), res };
+
+/* ---- Classificação por quartis (ou quintis) ---- */
+const NDVI_COLS = { 4: ['#640000', '#ff0000', '#00c800', '#006400'], 5: ['#640000', '#ff0000', '#ffff00', '#00c800', '#006400'] };
+const NDVI_NAME = { 4: 'quartil', 5: 'quintil' };
+const NODATA = -32768;
+function pct(sorted, q) { if (!sorted.length) return NaN; const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i); return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo); }
+function breaksOf(sorted, n) { return Array.from({ length: n - 1 }, (_, i) => pct(sorted, (i + 1) / n)); }
+function classOf(v, br) { let k = 0; while (k < br.length && v > br[k]) k++; return k; }
+const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mLabel = m => `${MES[+m.slice(5) - 1]}/${m.slice(2, 4)}`;
+const brText = br => br.map(b => nf(b, 2)).join(' | ');
+
+function ndviMonths() { const s = new Set(); for (const m of S.ndvi.values()) for (const k of m.keys()) s.add(k); return [...s].sort(); }
+function applyNdviMonth() {
+  const ms = ndviMonths();
+  if (!ms.includes(S.ndviMonth)) S.ndviMonth = ms[ms.length - 1] || null;
+  for (const f of S.feats) { const p = f.properties; p.ndvi = S.ndvi.get(farmKey(p))?.get(S.ndviMonth)?.means[p.fid] ?? null; }
+  $('#nd-month').innerHTML = ms.length ? ms.slice().reverse().map(m => `<option value="${m}" ${m === S.ndviMonth ? 'selected' : ''}>${mLabel(m)}</option>`).join('') : '<option value="">Nenhum mês baixado</option>';
 }
+function putNdvi(rec) { let m = S.ndvi.get(rec.key); if (!m) S.ndvi.set(rec.key, m = new Map()); m.set(rec.month, rec); }
+// Imagem da fazenda pintada pelas classes dos pixels DAQUELA fazenda naquele mês.
+function ndviImage(rec) {
+  const n = S.ndviN;
+  if (rec._img?.n === n) return rec._img;
+  const vals = Float32Array.from(rec.grid.filter(v => v !== NODATA), v => v / 1e4).sort();
+  const br = breaksOf(vals, n), cols = NDVI_COLS[n].map(hex2rgb);
+  const cv = document.createElement('canvas'); cv.width = rec.W; cv.height = rec.H;
+  const ctx = cv.getContext('2d'), im = ctx.createImageData(rec.W, rec.H);
+  for (let k = 0; k < rec.grid.length; k++) if (rec.grid[k] !== NODATA) { const c = cols[classOf(rec.grid[k] / 1e4, br)]; im.data[k * 4] = c[0]; im.data[k * 4 + 1] = c[1]; im.data[k * 4 + 2] = c[2]; im.data[k * 4 + 3] = 255; }
+  ctx.putImageData(im, 0, 0);
+  return rec._img = { n, url: cv.toDataURL('image/png'), br };
+}
+function farmNdviMean(fm, rec) {
+  let s = 0, a = 0;
+  for (const f of fm.feats) { const v = rec.means[f.properties.fid]; if (v != null) { const w = f.properties.area || f.properties.a_geo || 1; s += v * w; a += w; } }
+  return a ? s / a : null;
+}
+
+/* ---- Leitura das cenas ---- */
+const tiffCache = new Map();
+function openBand(href) {
+  if (!tiffCache.has(href)) tiffCache.set(href, (async () => {
+    const tiff = await GeoTIFF.fromUrl(href), img = await tiff.getImage();
+    const [ox, oy] = img.getOrigin(), [rx, ry] = img.getResolution();
+    return { img, ox, oy, rx: Math.abs(rx), ry: Math.abs(ry), W: img.getWidth(), H: img.getHeight() };
+  })());
+  return tiffCache.get(href);
+}
+async function readBand(href, zone, bb) {
+  const b = await openBand(href);
+  const cs = [[bb[0], bb[1]], [bb[0], bb[3]], [bb[2], bb[1]], [bb[2], bb[3]]].map(c => toUTM(c[0], c[1], zone));
+  const xs = cs.map(c => c[0]), ys = cs.map(c => c[1]);
+  const x0 = Math.max(0, Math.floor((Math.min(...xs) - b.ox) / b.rx) - 1), x1 = Math.min(b.W, Math.ceil((Math.max(...xs) - b.ox) / b.rx) + 1);
+  const y0 = Math.max(0, Math.floor((b.oy - Math.max(...ys)) / b.ry) - 1), y1 = Math.min(b.H, Math.ceil((b.oy - Math.min(...ys)) / b.ry) + 1);
+  if (x1 <= x0 || y1 <= y0) throw new Error('fora da cena');
+  const [data] = await b.img.readRasters({ window: [x0, y0, x1, y1], samples: [0] });
+  const w = x1 - x0, h = y1 - y0, ox = b.ox + x0 * b.rx, oy = b.oy - y0 * b.ry;
+  return { at: (E, N) => { const c = Math.floor((E - ox) / b.rx), r = Math.floor((oy - N) / b.ry); return c < 0 || r < 0 || c >= w || r >= h ? -1 : data[r * w + c]; } };
+}
+async function findScenes(bb, month) {
+  const [y, m] = month.split('-').map(Number), last = new Date(y, m, 0).getDate();
+  const q = await (await fetch(CFG.stac, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    collections: ['sentinel-2-l2a'], bbox: bb, limit: 200, datetime: `${month}-01T00:00:00Z/${month}-${last}T23:59:59Z`,
+    query: { 'eo:cloud_cover': { lt: CFG.maxCloud } } }) })).json();
+  return (q.features || []).filter(it => it.assets?.red && it.assets?.nir && it.geometry)
+    .sort((a, b) => a.properties['eo:cloud_cover'] - b.properties['eo:cloud_cover']);
+}
+const SCL_OK = new Set([4, 5, 6, 7]); // vegetação, solo, água, não classificado (fora: nuvem, sombra, cirrus)
+async function ndviFromScene(fm, item, month) {
+  const bb = fm.bb, pr = item.properties;
+  const epsg = pr['proj:epsg'] || +String(pr['proj:code'] || '').replace('EPSG:', '');
+  if (!(epsg > 32700 && epsg <= 32760)) return null;
+  const zone = epsg - 32700;
+  const [red, nir, scl] = await Promise.all([
+    readBand(item.assets.red.href, zone, bb), readBand(item.assets.nir.href, zone, bb),
+    item.assets.scl ? readBand(item.assets.scl.href, zone, bb).catch(() => null) : null]);
+  const off = pr['earthsearch:boa_offset_applied'] === false ? 1000 : 0;
+  const mid = (bb[1] + bb[3]) / 2, wM = hav([bb[0], mid], [bb[2], mid]), hM = hav([bb[0], bb[1]], [bb[0], bb[3]]);
+  const sc = Math.min(1, 640 / Math.max(wM / 10, hM / 10, 1));
+  const W = Math.max(2, Math.round(wM / 10 * sc)), H = Math.max(2, Math.round(hM / 10 * sc));
+  const grid = new Int16Array(W * H).fill(NODATA), means = {};
+  const dx = (bb[2] - bb[0]) || 1e-6, dy = (bb[3] - bb[1]) || 1e-6;
+  let allIn = 0, allOk = 0;
+  for (const f of fm.feats) {
+    const fb = f.bb, i0 = Math.max(0, Math.floor((fb[0] - bb[0]) / dx * W)), i1 = Math.min(W - 1, Math.ceil((fb[2] - bb[0]) / dx * W));
+    const j0 = Math.max(0, Math.floor((bb[3] - fb[3]) / dy * H)), j1 = Math.min(H - 1, Math.ceil((bb[3] - fb[1]) / dy * H));
+    let sum = 0, n = 0, nIn = 0;
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const lon = bb[0] + (i + .5) / W * dx, lat = bb[3] - (j + .5) / H * dy;
+      if (!inGeom(lon, lat, f.geometry)) continue;
+      nIn++;
+      const [E, N] = toUTM(lon, lat, zone), R = red.at(E, N), I = nir.at(E, N);
+      if (R < 0 || I < 0 || (!R && !I)) continue;
+      if (scl && !SCL_OK.has(scl.at(E, N))) continue;
+      const v = (I - R) / (I + R - 2 * off);
+      if (!isFinite(v)) continue;
+      grid[j * W + i] = Math.round(Math.max(-1, Math.min(1, v)) * 1e4); sum += v; n++;
+    }
+    allIn += nIn; allOk += n;
+    if (n && n >= nIn * .5) means[f.properties.fid] = +(sum / n).toFixed(3);
+  }
+  if (!allIn || allOk < allIn * .5 || !Object.keys(means).length) return null; // cena com nuvem em cima da fazenda
+  return { key: fm.key, month, date: pr.datetime.slice(0, 10), cloud: pr['eo:cloud_cover'], bounds: [[bb[1], bb[0]], [bb[3], bb[2]]], W, H, grid, means };
+}
+async function ndviFarmMonth(fm, month, items) {
+  const bb = fm.bb;
+  if (hav([bb[0], bb[1]], [bb[2], bb[3]]) > 20000) return null;
+  const corners = [[bb[0], bb[1]], [bb[0], bb[3]], [bb[2], bb[1]], [bb[2], bb[3]]];
+  const cands = items.filter(it => corners.every(c => inGeom(c[0], c[1], it.geometry))).slice(0, 3);
+  for (const it of cands) { const rec = await ndviFromScene(fm, it, month); if (rec) return rec; }
+  return null;
+}
+const curMonth = () => new Date().toISOString().slice(0, 7);
+function monthsBetween(a, b) {
+  if (a > b) [a, b] = [b, a];
+  const out = []; let [y, m] = a.split('-').map(Number);
+  while (out.length < 36) { const k = `${y}-${String(m).padStart(2, '0')}`; out.push(k); if (k >= b) break; if (++m > 12) { m = 1; y++; } }
+  return out;
+}
+// Baixa NDVI de várias fazendas e meses. Pula o que já existe (menos o mês corrente, que pode ter cena nova).
+async function runNdvi(farms, months, report, ctl) {
+  await loadScript('vendor/geotiff.js');
+  const st = { ok: 0, skip: 0, none: 0, fail: 0 }, total = farms.length * months.length; let done = 0;
+  const ub = farms.reduce((b, f) => [Math.min(b[0], f.bb[0]), Math.min(b[1], f.bb[1]), Math.max(b[2], f.bb[2]), Math.max(b[3], f.bb[3])], [180, 90, -180, -90]);
+  for (const month of months) {
+    if (ctl.stop) break;
+    const todo = farms.filter(f => month === curMonth() || !S.ndvi.get(f.key)?.has(month));
+    st.skip += farms.length - todo.length; done += farms.length - todo.length;
+    if (!todo.length) { report(done, total, month, st); continue; }
+    let items;
+    try { items = await findScenes(ub, month); }
+    catch (e) { console.warn(e); st.fail += todo.length; done += todo.length; report(done, total, month, st); continue; }
+    tiffCache.clear(); let i = 0;
+    const worker = async () => {
+      while (i < todo.length && !ctl.stop) {
+        const fm = todo[i++];
+        try {
+          const rec = await ndviFarmMonth(fm, month, items);
+          if (rec) { putNdvi(rec); await DB.set('ndvi', `${rec.key}@${month}`, { ...rec, _img: undefined }); st.ok++; } else st.none++;
+        } catch (e) { console.warn(fm.faz, month, e); st.fail++; }
+        done++; report(done, total, month, st);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  }
+  tiffCache.clear();
+  return st;
+}
+function afterNdvi() {
+  applyNdviMonth();
+  if (ndviMonths().length) { S.theme = 'ndvi'; $('#theme').value = 'ndvi'; }
+  restyle(); showNdviOverlay(); renderFarms(); renderBI(); renderData();
+}
+const stText = st => `${st.ok} leituras novas, ${st.skip} já guardadas, ${st.none} sem cena limpa, ${st.fail} com falha`;
+// Uma fazenda: últimos 6 meses.
 async function computeNDVI(key) {
   const fm = S.farms.get(key), job = $('#job');
-  if (!navigator.onLine) return toast('O NDVI precisa de internet para buscar a imagem do satélite.');
-  const say = t => { if (job) job.innerHTML = `<p class="muted">${t}</p><div class="progress"><i style="width:40%"></i></div>`; };
+  if (!navigator.onLine) return toast('O NDVI precisa de internet para buscar as imagens do satélite.');
+  if (ND.running) return toast('Já existe um download de NDVI em andamento.');
+  const d = new Date(); d.setMonth(d.getMonth() - 5);
+  const months = monthsBetween(d.toISOString().slice(0, 7), curMonth());
+  ND.running = true; ND.ctl = { stop: false };
+  if (job) job.innerHTML = '<p class="muted" id="job-t">Procurando imagens Sentinel-2 dos últimos 6 meses…</p><div class="progress"><i id="job-b"></i></div>';
   try {
-    say('Procurando a imagem Sentinel-2 mais recente sem nuvens…');
-    await loadScript('vendor/geotiff.js');
-    const bb = fm.bb;
-    if (hav([bb[0], bb[1]], [bb[2], bb[3]]) > 20000) throw new Error('os talhões deste grupo estão espalhados por mais de 20 km');
-    const q = await (await fetch(CFG.stac, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      collections: ['sentinel-2-l2a'], bbox: bb, limit: 8, query: { 'eo:cloud_cover': { lt: CFG.maxCloud } },
-      sortby: [{ field: 'properties.datetime', direction: 'desc' }] }) })).json();
-    const item = (q.features || []).find(it => it.bbox && it.bbox[0] <= bb[0] && it.bbox[1] <= bb[1] && it.bbox[2] >= bb[2] && it.bbox[3] >= bb[3]) || (q.features || [])[0];
-    if (!item) throw new Error(`nenhuma cena com menos de ${CFG.maxCloud}% de nuvens`);
-    const epsg = item.properties['proj:epsg'] || +String(item.properties['proj:code'] || '').replace('EPSG:', '');
-    if (!(epsg > 32700 && epsg <= 32760)) throw new Error('projeção inesperada na cena');
-    const zone = epsg - 32700;
-    say(`Lendo a cena de ${dBR(item.properties.datetime.slice(0, 10))}…`);
-    const [red, nir] = await Promise.all([readBand(item.assets.red.href, zone, bb), readBand(item.assets.nir.href, zone, bb)]);
-    const off = item.properties['earthsearch:boa_offset_applied'] === false ? 1000 : 0;
-
-    // Grade em lat/lon cobrindo a fazenda, ~10 m por pixel.
-    const mid = (bb[1] + bb[3]) / 2, wM = hav([bb[0], mid], [bb[2], mid]), hM = hav([bb[0], bb[1]], [bb[0], bb[3]]);
-    const sc = Math.min(1, 640 / Math.max(wM / 10, hM / 10));
-    const W = Math.max(2, Math.round(wM / 10 * sc)), H = Math.max(2, Math.round(hM / 10 * sc));
-    const grid = new Float32Array(W * H).fill(NaN), mask = new Uint8Array(W * H);
-    const px2ll = (i, j) => [bb[0] + (i + .5) / W * (bb[2] - bb[0]), bb[3] - (j + .5) / H * (bb[3] - bb[1])];
-    const means = {};
-    for (const f of fm.feats) {
-      const fb = f.bb, i0 = Math.max(0, Math.floor((fb[0] - bb[0]) / (bb[2] - bb[0]) * W)), i1 = Math.min(W - 1, Math.ceil((fb[2] - bb[0]) / (bb[2] - bb[0]) * W));
-      const j0 = Math.max(0, Math.floor((bb[3] - fb[3]) / (bb[3] - bb[1]) * H)), j1 = Math.min(H - 1, Math.ceil((bb[3] - fb[1]) / (bb[3] - bb[1]) * H));
-      let sum = 0, n = 0;
-      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-        const [lon, lat] = px2ll(i, j);
-        if (!inGeom(lon, lat, f.geometry)) continue;
-        const [E, N] = toUTM(lon, lat, zone);
-        const c = Math.floor((E - red.ox) / red.res), rw = Math.floor((red.oy - N) / red.res);
-        if (c < 0 || rw < 0 || c >= red.w || rw >= red.h) continue;
-        const R = red.data[rw * red.w + c], I = nir.data[rw * nir.w + c];
-        if (!R && !I) continue;
-        const v = ((I - off) - (R - off)) / ((I - off) + (R - off));
-        if (!isFinite(v)) continue;
-        grid[j * W + i] = v; mask[j * W + i] = 1; sum += v; n++;
-      }
-      if (n) means[f.properties.fid] = +(sum / n).toFixed(3);
-    }
-    if (!Object.keys(means).length) throw new Error('a cena não cobre os talhões');
-    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-    const ctx = cv.getContext('2d'), im = ctx.createImageData(W, H);
-    for (let k = 0; k < W * H; k++) if (mask[k]) { const c = ndviRGB(grid[k]); im.data.set([c[0], c[1], c[2], 255], k * 4); }
-    ctx.putImageData(im, 0, 0);
-    const rec = { date: item.properties.datetime.slice(0, 10), cloud: item.properties['eo:cloud_cover'], bounds: [[bb[1], bb[0]], [bb[3], bb[2]]], img: cv.toDataURL('image/png'), means };
-    S.ndvi.set(key, rec); await DB.set('ndvi', key, rec);
-    for (const f of fm.feats) f.properties.ndvi = means[f.properties.fid] ?? null;
-    S.theme = 'ndvi'; $('#theme').value = 'ndvi'; restyle(); renderFarms();
+    const st = await runNdvi([fm], months, (dn, tot, m) => { const b = $('#job-b'); if (b) { b.style.width = `${dn / tot * 100}%`; $('#job-t').textContent = `Lendo ${mLabel(m)}: ${dn} de ${tot} meses`; } }, ND.ctl);
+    ND.running = false; afterNdvi();
     if (S.selFarm === key) openFarm(key, false);
-    toast(`NDVI de ${dBR(rec.date)} aplicado em ${fm.faz}.`);
+    toast(st.ok || st.skip ? `${fm.faz}: ${stText(st)}.` : `Nenhuma imagem limpa para ${fm.faz} nos últimos 6 meses.`, 5000);
   } catch (e) {
-    console.error(e);
+    console.error(e); ND.running = false;
     if (job) job.innerHTML = `<p class="note">Não foi possível calcular o NDVI agora (${esc(e.message || 'falha de rede')}). Confira a conexão e tente de novo.</p>`;
   }
+}
+// Todas as fazendas, período escolhido em Dados.
+const ND = { running: false, ctl: null, text: '', pct: 0, from: null, to: null };
+async function downloadAllNdvi() {
+  if (ND.running) return;
+  if (!navigator.onLine) return toast('Conecte-se à internet para baixar o NDVI.');
+  const months = monthsBetween(ND.from, ND.to), farms = [...S.farms.values()];
+  ND.running = true; ND.ctl = { stop: false }; ND.pct = 0; ND.text = 'Preparando…'; renderData();
+  try {
+    const st = await runNdvi(farms, months, (dn, tot, m, s) => {
+      ND.pct = dn / tot * 100; ND.text = `${mLabel(m)}: ${nf(dn)} de ${nf(tot)} fazendas-mês. ${stText(s)}.`;
+      const b = $('#nd-bar'); if (b) { b.style.width = `${ND.pct}%`; $('#nd-text').textContent = ND.text; }
+    }, ND.ctl);
+    ND.text = `${ND.ctl.stop ? 'Interrompido' : 'Concluído'}: ${stText(st)}.`;
+  } catch (e) { console.error(e); ND.text = `Download interrompido por erro (${e.message || 'rede'}). O que já foi lido está guardado.`; }
+  ND.running = false; afterNdvi();
+}
+function exportNdvi() {
+  const ms = ndviMonths(), cols = ['fid', 'id', 'fa', 'fazenda', 'talhao', 'area_ha', 'variedade', 'corte', ...ms];
+  const q = v => v == null ? '' : /[";\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const lines = [];
+  for (const f of S.feats) {
+    const p = f.properties, fmN = S.ndvi.get(farmKey(p)); if (!fmN) continue;
+    const vs = ms.map(m => fmN.get(m)?.means[p.fid]); if (vs.every(v => v == null)) continue;
+    lines.push([p.fid, p.id, p.fa, p.faz, p.talhao, p.area, p.varied, p.corte, ...vs.map(v => v == null ? '' : String(v).replace('.', ','))].map(q).join(';'));
+  }
+  download(`mgeo_ndvi_mensal_${new Date().toISOString().slice(0, 10)}.csv`, '\ufeff' + cols.join(';') + '\n' + lines.join('\n'), 'text/csv');
+}
+// Estatística mensal (Q1, mediana, Q3, média ponderada pela área) dos talhões filtrados.
+function ndviMonthly(rows) {
+  return ndviMonths().map(m => {
+    const vals = [], wsum = [0, 0];
+    for (const p of rows) { const v = S.ndvi.get(farmKey(p))?.get(m)?.means[p.fid]; if (v == null) continue; vals.push(v); const w = p.area || 1; wsum[0] += v * w; wsum[1] += w; }
+    vals.sort((a, b) => a - b);
+    return { m, n: vals.length, mean: wsum[1] ? wsum[0] / wsum[1] : null, q1: pct(vals, .25), med: pct(vals, .5), q3: pct(vals, .75), min: vals[0], max: vals[vals.length - 1] };
+  }).filter(s => s.n);
 }
 
 /* ================= Lista de fazendas ================= */
@@ -627,6 +759,10 @@ function renderBI() {
       <div><b class="num">${prod ? nf(prod) + ' t' : '–'}</b><span>${prod ? `produção, ${nf(prod / aProd, 1)} t/ha` : 'produção lançada'}</span></div>
     </div>
     ${prod ? '' : '<p class="note" style="margin-top:10px">A base ainda não tem toneladas. Preencha “Produção” no levantamento do talhão e o TCH aparece aqui sozinho.</p>'}
+    ${(() => { const st = ndviMonthly(rows); if (!st.length) return ''; return `<h2>NDVI por mês</h2>
+      <div class="boxes">${st.map(s => `<div><em>${nf(s.mean, 2)}</em><b><i style="bottom:${s.q1 * 100}%;height:${Math.max(1.5, (s.q3 - s.q1) * 100)}%"></i><u style="bottom:${s.med * 100}%"></u></b><span>${mLabel(s.m)}</span></div>`).join('')}</div>
+      <p class="muted">Caixa: do 1º ao 3º quartil dos talhões. Traço: mediana. Número: média ponderada pela área.</p>
+      <table class="mini"><tr><th>Mês</th><th>Talhões</th><th>Média</th><th>Q1</th><th>Mediana</th><th>Q3</th></tr>${st.slice().reverse().map(s => `<tr><td>${mLabel(s.m)}</td><td>${nf(s.n)}</td><td class="num">${nf(s.mean, 2)}</td><td>${nf(s.q1, 2)}</td><td>${nf(s.med, 2)}</td><td>${nf(s.q3, 2)}</td></tr>`).join('')}</table>`; })()}
     <h2>Área colhida por mês</h2>
     <div class="months">${months.map(m => { const v = byM.get(m) || 0; return `<div><em>${v ? nf(v) : ''}</em><i style="height:calc((100% - 40px) * ${(v / maxM).toFixed(4)})"></i><span>${MES[+m.slice(5) - 1]}</span></div>`; }).join('')}</div>
     <h2>Área colhida por usina</h2>${hbars(groupSum(colh, p => p.usina || 'Não informada', p => p.area), { cls: 'amber' })}
@@ -646,6 +782,8 @@ async function renderData() {
   const n = S.edits.size; $('#pend-dot').hidden = !n;
   let use = '';
   try { const e = await navigator.storage.estimate(); use = `${nf(e.usage / 1048576, 1)} MB usados neste aparelho`; } catch (e) { /* sem estimativa */ }
+  const ms = ndviMonths(); let nRec = 0; for (const m of S.ndvi.values()) nRec += m.size;
+  if (!ND.from) { const d = new Date(); d.setMonth(d.getMonth() - 2); ND.from = d.toISOString().slice(0, 7); ND.to = curMonth(); }
   const last = [...S.edits.values()].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 5);
   $('#data').innerHTML = `<div class="stack">
     <div class="box"><h2>Alterações do campo</h2>
@@ -655,6 +793,15 @@ async function renderData() {
         <button class="btn primary" data-act="exp-edits" ${n ? '' : 'disabled'}>Exportar alterações (CSV)</button>
         <button class="btn" data-act="clear-edits" ${n ? '' : 'disabled'}>Descartar alterações</button>
       </div></div>
+    <div class="box"><h2>NDVI de todas as fazendas</h2>
+      <p class="muted">Sentinel-2 (10 m): uma leitura por fazenda por mês, da cena com menos nuvens, com nuvem e sombra mascaradas. Já guardado: ${nf(nRec)} leituras em ${S.ndvi.size} fazendas${ms.length ? `, de ${mLabel(ms[0])} a ${mLabel(ms[ms.length - 1])}` : ''}. Um mês inteiro leva vários minutos; dá para usar o app enquanto baixa, mas deixe esta aba aberta.</p>
+      <div class="two"><label>De<input type="month" id="nd-from" value="${ND.from}" max="${curMonth()}" ${ND.running ? 'disabled' : ''}></label><label>Até<input type="month" id="nd-to" value="${ND.to}" max="${curMonth()}" ${ND.running ? 'disabled' : ''}></label></div>
+      <div class="actions">
+        ${ND.running ? '<button class="btn" data-act="ndvi-stop">Parar download</button>' : '<button class="btn primary" data-act="ndvi-all">Baixar NDVI do período</button>'}
+        <button class="btn" data-act="exp-ndvi" ${nRec ? '' : 'disabled'}>Exportar NDVI mensal (CSV)</button>
+        <button class="btn" data-act="clear-ndvi" ${nRec && !ND.running ? '' : 'disabled'}>Apagar NDVI</button>
+      </div>
+      ${ND.text ? `<p class="muted" id="nd-text" style="margin-top:10px">${esc(ND.text)}</p><div class="progress"><i id="nd-bar" style="width:${ND.pct}%"></i></div>` : ''}</div>
     <div class="box"><h2>Base de talhões</h2>
       <p class="muted">${nf(S.feats.length)} talhões em ${S.farms.size} fazendas. Exporte com as alterações aplicadas para abrir no QGIS, ou importe uma base nova em GeoJSON.</p>
       <div class="actions">
@@ -730,6 +877,10 @@ function bind() {
   $('#data').addEventListener('click', async e => {
     const a = e.target.closest('[data-act]')?.dataset.act; if (!a) return;
     if (a === 'exp-edits') exportEdits();
+    else if (a === 'ndvi-all') downloadAllNdvi();
+    else if (a === 'ndvi-stop') { ND.ctl.stop = true; ND.text = 'Parando depois das leituras em andamento…'; renderData(); }
+    else if (a === 'exp-ndvi') exportNdvi();
+    else if (a === 'clear-ndvi' && confirm('Apagar todo o NDVI guardado neste aparelho? Será preciso baixar de novo.')) { await DB.clear('ndvi'); S.ndvi.clear(); ND.text = ''; afterNdvi(); toast('NDVI apagado.'); }
     else if (a === 'exp-base') exportBase();
     else if (a === 'imp-base') $('#file').click();
     else if (a === 'install' && installEvt) { installEvt.prompt(); installEvt = null; renderData(); }
@@ -739,6 +890,11 @@ function bind() {
       await caches.delete('mgeo-tiles'); S.offline.clear(); await DB.set('kv', 'offline', []); renderData(); renderFarms(); toast('Imagens apagadas.');
     }
   });
+  $('#data').addEventListener('change', e => { if (e.target.id === 'nd-from') ND.from = e.target.value || ND.from; if (e.target.id === 'nd-to') ND.to = e.target.value || ND.to; });
+  const reNdvi = () => { applyNdviMonth(); restyle(); showNdviOverlay(); if (S.selFarm && !sheet.hidden && !S.route) S.selFid ? openTalhao(S.selFid) : openFarm(S.selFarm, false); };
+  $('#nd-month').onchange = e => { S.ndviMonth = e.target.value || null; reNdvi(); };
+  $('#nd-n').onchange = e => { S.ndviN = +e.target.value; reNdvi(); };
+  sheet.addEventListener('click', e => { const tr = e.target.closest('tr[data-month]'); if (tr) { S.ndviMonth = tr.dataset.month; reNdvi(); } });
   $('#file').onchange = e => { if (e.target.files[0]) importBase(e.target.files[0]); e.target.value = ''; };
   const net = () => { const n = $('#net'); n.textContent = navigator.onLine ? 'online' : 'offline'; n.classList.toggle('off', !navigator.onLine); };
   addEventListener('online', net); addEventListener('offline', net); net();
@@ -750,19 +906,19 @@ async function start() {
   initMap(); bind();
   try {
     for (const [k, v] of await DB.all('edits')) S.edits.set(k, v);
-    for (const [k, v] of await DB.all('ndvi')) S.ndvi.set(k, v);
+    for (const [, v] of await DB.all('ndvi')) if (v?.grid && v.month) putNdvi(v);
     S.offline = new Set(await DB.get('kv', 'offline') || []);
   } catch (e) { console.warn('IndexedDB indisponível', e); }
   let fc = null;
   try { fc = await DB.get('kv', 'base'); } catch (e) { /* segue com a base do app */ }
   if (!fc) fc = await (await fetch('data/talhoes.geojson')).json();
-  indexData(fc);
+  indexData(fc); applyNdviMonth();
   const all = S.feats.reduce((b, f) => [Math.min(b[0], f.bb[0]), Math.min(b[1], f.bb[1]), Math.max(b[2], f.bb[2]), Math.max(b[3], f.bb[3])], [180, 90, -180, -90]);
   map.fitBounds([[all[1], all[0]], [all[3], all[2]]], { padding: [20, 20] });
   drawTalhoes(); renderFarms(); fillFilters(); renderBI(); renderData();
   if (!isMobile()) setTab('bi');
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW', e));
-  window.MGEO = { S, toUTM, openFarm, openTalhao, openSurvey, setTab, tileList, map };
+  window.MGEO = { S, ND, downloadAllNdvi, computeNDVI, ndviMonths, toUTM, openFarm, openTalhao, openSurvey, setTab, tileList, map };
 }
 start().catch(e => { console.error(e); toast('Não consegui carregar a base de talhões. Recarregue a página.', 8000); });
 })();
