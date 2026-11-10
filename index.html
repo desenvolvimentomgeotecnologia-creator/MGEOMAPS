@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MGEO Campo</title>
+<meta name="theme-color" content="#2b2d30">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body data-tab="map">
+
+<nav id="tabs" aria-label="Seções">
+  <img class="rail-mark" src="assets/mark.png" alt="MGEO">
+  <button data-tab="map" aria-current="true"><svg viewBox="0 0 24 24"><path d="M9 4 3 6.5v13L9 17l6 3 6-2.5v-13L15 7 9 4Zm0 0v13m6-10v13"/></svg><span>Mapa</span></button>
+  <button data-tab="farms"><svg viewBox="0 0 24 24"><path d="M4 20V10l8-6 8 6v10h-5v-6H9v6H4Z"/></svg><span>Fazendas</span></button>
+  <button data-tab="bi"><svg viewBox="0 0 24 24"><path d="M5 20V11m7 9V4m7 16v-6"/></svg><span>Indicadores</span></button>
+  <button data-tab="data"><svg viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Zm0 0v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>Dados</span><i id="pend-dot" hidden></i></button>
+</nav>
+
+<aside id="panel">
+  <header class="brand">
+    <span class="logo-chip"><img src="assets/logo.png" alt="MGEO, soluções em agricultura de precisão e geotecnologia"></span>
+    <span id="net" class="net">online</span>
+  </header>
+
+  <section id="v-farms" class="view">
+    <h1>Fazendas</h1>
+    <input id="q" type="search" placeholder="Fazenda, associado, FA ou município" autocomplete="off">
+    <p id="q-count" class="muted"></p>
+    <ul id="farm-list" class="farm-list"></ul>
+  </section>
+
+  <section id="v-bi" class="view">
+    <h1>Indicadores</h1>
+    <div class="filters">
+      <label>Safra<select id="f-safra"></select></label>
+      <label>Técnico<select id="f-tec"></select></label>
+      <label>Município<select id="f-mun"></select></label>
+    </div>
+    <div id="bi"></div>
+  </section>
+
+  <section id="v-data" class="view">
+    <h1>Dados</h1>
+    <div id="data"></div>
+  </section>
+</aside>
+
+<main id="mapwrap">
+  <div id="map"></div>
+
+  <button id="search-pill" class="pill"><img src="assets/mark.png" alt=""><span>Buscar fazenda</span></button>
+
+  <div class="fabs">
+    <button id="btn-layers" title="Temas e rótulos" aria-label="Temas e rótulos"><svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg></button>
+    <button id="btn-gps" title="Onde estou" aria-label="Onde estou"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg></button>
+  </div>
+
+  <div id="layers" class="card pop" hidden>
+    <label>Colorir talhões por
+      <select id="theme">
+        <option value="corte">Corte</option>
+        <option value="varied">Variedade</option>
+        <option value="mes">Mês da colheita</option>
+        <option value="colhido">Colhido na safra atual</option>
+        <option value="tecnico">Técnico</option>
+        <option value="usina">Usina</option>
+        <option value="ndvi">NDVI</option>
+      </select>
+    </label>
+    <label>Rótulo
+      <select id="label">
+        <option value="talhao">Talhão</option>
+        <option value="varied">Variedade</option>
+        <option value="corte">Corte</option>
+        <option value="area">Área (ha)</option>
+        <option value="faz">Fazenda</option>
+        <option value="">Sem rótulo</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="tg-ref" checked> Nomes e estradas</label>
+    <label class="check"><input type="checkbox" id="tg-ndvi" checked> Imagem NDVI das fazendas</label>
+    <label>Transparência dos talhões <input type="range" id="opac" min="0" max="90" value="55"></label>
+  </div>
+
+  <div id="legend" class="card"></div>
+  <div id="sheet" class="card" hidden></div>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="file" accept=".geojson,.json,application/geo+json" hidden>
+
+<script src="vendor/leaflet.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
