@@ -2,113 +2,846 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MGEO Campo</title>
-<meta name="theme-color" content="#2b2d30">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="assets/icon-192.png">
-<link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="vendor/leaflet.css">
-<link rel="stylesheet" href="css/app.css">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>MGEO PDF</title>
+<meta name="description" content="Leitor de GeoPDF offline com GPS em tempo real">
+<meta name="theme-color" content="#102A24">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MGEO PDF">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="stylesheet" href="lib/leaflet.css">
+<link rel="stylesheet" href="extra.css">
+<style>
+:root{
+  --pine:#102A24; --pine-2:#18392F; --signal:#F2C230; --signal-ink:#1B1A10;
+  --gps:#2F7BF6; --good:#1FA463; --mid:#E0A800; --bad:#E5484D;
+  --panel:rgba(255,255,255,.9); --panel-solid:#FFFFFF; --text:#10241F; --muted:#56706A;
+  --line:rgba(16,36,31,.12); --field:#EEF3F1; --shadow:0 8px 28px rgba(8,24,20,.22);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --panel:rgba(16,34,29,.9); --panel-solid:#12261F; --text:#E7F0EC; --muted:#8FA9A1;
+    --line:rgba(231,240,236,.12); --field:#1A3229; --shadow:0 8px 28px rgba(0,0,0,.45);
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:var(--pine);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--signal);outline-offset:2px}
+svg{display:block}
+.num{font-variant-numeric:tabular-nums}
+
+#map{position:fixed;inset:0;background:#dfe5e2}
+@media (prefers-color-scheme:dark){#map{background:#1d2a26}}
+.leaflet-container{font:inherit}
+.leaflet-control-attribution{font-size:10px;background:rgba(255,255,255,.7)!important}
+.leaflet-top.leaflet-right{top:calc(env(safe-area-inset-top,0px) + 66px);right:70px}
+.leaflet-control-scale{margin:0!important}
+.leaflet-control-scale-line{background:var(--panel);color:var(--text);border-color:var(--text);font-size:11px}
+.geo-img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none!important;pointer-events:none;image-rendering:auto}
+
+.panel{background:var(--panel);-webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
+  border:1px solid var(--line);box-shadow:var(--shadow)}
+
+/* topo */
+.topbar{position:fixed;z-index:1000;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 10px);
+  display:flex;align-items:center;gap:8px;pointer-events:none}
+.brand{pointer-events:auto;display:flex;align-items:center;gap:10px;min-width:0;max-width:calc(100% - 68px);
+  padding:7px 14px 7px 7px;border-radius:16px;text-align:left}
+.logo{flex:none;width:36px;height:36px;border-radius:11px;background:var(--pine);display:grid;place-items:center}
+.brand-txt{min-width:0}
+.brand-txt b{display:block;font-size:15px;font-weight:750;letter-spacing:.01em}
+.brand-txt span{display:block;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill-off{pointer-events:auto;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:650;
+  background:var(--signal);color:var(--signal-ink)}
+
+/* botões laterais */
+.fabs{position:fixed;z-index:1000;right:12px;top:calc(env(safe-area-inset-top,0px) + 66px);display:flex;flex-direction:column;gap:10px}
+.fab{width:48px;height:48px;border-radius:15px;display:grid;place-items:center}
+.fab:disabled{opacity:.45}
+.fab.on{color:var(--gps)}
+.fab.follow{background:var(--gps);color:#fff;border-color:transparent}
+
+/* rodapé: cartão GPS */
+.bottom{position:fixed;z-index:1000;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+  display:flex;gap:10px;align-items:stretch}
+.gps{flex:1;min-width:0;border-radius:20px;padding:11px 14px 11px 12px;display:flex;gap:12px;align-items:center;text-align:left}
+.meter{flex:none;position:relative;width:54px;height:54px}
+.meter svg{width:54px;height:54px;transform:rotate(-90deg)}
+.meter .track{stroke:var(--line);fill:none}
+.meter .bar{fill:none;stroke:var(--muted);stroke-linecap:round;transition:stroke-dashoffset .5s ease,stroke .3s}
+.meter .val{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13.5px;font-weight:800;line-height:1;letter-spacing:-.02em}
+.meter .val small{display:block;font-size:8.5px;font-weight:650;color:var(--muted);margin-top:2px;letter-spacing:0}
+.gps-body{min-width:0;flex:1}
+.gps-top{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700}
+.live{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.live.on{background:var(--good);box-shadow:0 0 0 0 rgba(31,164,99,.6);animation:live 1.6s infinite}
+.live.stale{background:var(--bad)}
+@keyframes live{70%{box-shadow:0 0 0 7px rgba(31,164,99,0)}100%{box-shadow:0 0 0 0 rgba(31,164,99,0)}}
+.coord{margin-top:3px;font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gps-meta{margin-top:3px;display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;color:var(--muted)}
+.gps-meta .warn{color:var(--bad);font-weight:650}
+.q-good .bar{stroke:var(--good)} .q-mid .bar{stroke:var(--mid)} .q-bad .bar{stroke:var(--bad)}
+
+.btn-maps{flex:none;width:78px;border-radius:20px;background:var(--signal);color:var(--signal-ink);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-weight:750;font-size:12.5px;position:relative;
+  box-shadow:var(--shadow)}
+.badge{position:absolute;top:7px;right:9px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--pine);color:#fff;
+  font-size:11px;font-weight:700;display:grid;place-items:center}
+
+/* folhas inferiores */
+.scrim{position:fixed;inset:0;z-index:1900;background:rgba(5,15,12,.42);opacity:0;pointer-events:none;transition:opacity .25s}
+.scrim.show{opacity:1;pointer-events:auto}
+.sheet{position:fixed;z-index:2000;left:0;right:0;bottom:0;max-height:84vh;max-height:84dvh;display:flex;flex-direction:column;
+  background:var(--panel-solid);color:var(--text);border-radius:24px 24px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.25);
+  transform:translateY(105%);transition:transform .32s cubic-bezier(.2,.8,.2,1);padding-bottom:env(safe-area-inset-bottom,0px)}
+.sheet.open{transform:none}
+@media (min-width:700px){.sheet{left:50%;right:auto;width:540px;margin-left:-270px}}
+.grab{width:40px;height:5px;border-radius:3px;background:var(--line);margin:9px auto 4px;flex:none}
+.sheet-head{display:flex;align-items:center;gap:10px;padding:6px 18px 12px;flex:none}
+.sheet-head h2{margin:0;font-size:20px;font-weight:800;flex:1}
+.sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 14px 16px}
+.btn{display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 15px;border-radius:12px;font-weight:700;font-size:14px}
+.btn-primary{background:var(--pine);color:#fff}
+@media (prefers-color-scheme:dark){.btn-primary{background:var(--signal);color:var(--signal-ink)}}
+.btn-ghost{background:var(--field)}
+.icon-btn{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:var(--muted)}
+.icon-btn:active{background:var(--field)}
+
+.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.item{display:flex;align-items:center;gap:12px;padding:8px;border-radius:16px;background:var(--field);border:2px solid transparent}
+.item.active{border-color:var(--signal)}
+.item-open{flex:1;min-width:0;display:flex;align-items:center;gap:12px;text-align:left}
+.thumb{flex:none;width:58px;height:58px;border-radius:11px;object-fit:cover;background:var(--line)}
+.item-info{min-width:0}
+.item-info b{display:block;font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-info span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+.empty{padding:28px 10px 18px;text-align:center;color:var(--muted);font-size:14.5px;line-height:1.5}
+.empty b{display:block;color:var(--text);font-size:16px;margin-bottom:4px}
+.storage{font-size:12px;color:var(--muted);padding:12px 4px 0}
+
+.install{margin-top:14px;padding:14px;border-radius:16px;border:1.5px dashed var(--line);font-size:13.5px;line-height:1.5}
+.install b{display:block;font-size:14.5px;margin-bottom:3px}
+.install .btn{margin-top:10px}
+
+.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.seg button{border-radius:14px;padding:6px 6px 8px;background:var(--field);border:2px solid transparent;font-size:12.5px;font-weight:650}
+.seg button.sel{border-color:var(--signal)}
+.swatch{height:46px;border-radius:9px;margin-bottom:6px}
+.sw-m{background:linear-gradient(135deg,#e8eae6 0 40%,#f6d26b 40% 46%,#e8eae6 46% 70%,#a8d4f0 70%)}
+.sw-s{background:radial-gradient(circle at 30% 40%,#5b7a3a,#2f4a26 50%,#4a5d3a)}
+.sw-y{background:linear-gradient(135deg,#3d5a2e 0 40%,#f6d26b 40% 45%,#2f4a26 45%)}
+.sw-n{background:repeating-linear-gradient(45deg,var(--line) 0 6px,transparent 6px 12px)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 4px;border-bottom:1px solid var(--line);font-size:15px}
+.row:last-child{border-bottom:0}
+.row small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+input[type=range]{width:46%;accent-color:var(--gps)}
+.switch{position:relative;width:50px;height:30px;flex:none}
+.switch input{opacity:0;position:absolute;inset:0;margin:0;cursor:pointer}
+.switch span{position:absolute;inset:0;border-radius:15px;background:var(--line);transition:background .2s;pointer-events:none}
+.switch span::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
+.switch input:checked+span{background:var(--good)}
+.switch input:checked+span::after{transform:translateX(20px)}
+.label{font-size:13px;font-weight:700;color:var(--muted);margin:16px 4px 8px}
+
+/* ocupado / avisos */
+.busy{position:fixed;inset:0;z-index:3000;display:none;place-items:center;background:rgba(5,15,12,.55)}
+.busy.show{display:grid}
+.busy-box{width:min(300px,84vw);padding:22px;border-radius:20px;background:var(--panel-solid);text-align:center}
+.spin{width:38px;height:38px;margin:0 auto 12px;border-radius:50%;border:4px solid var(--line);border-top-color:var(--signal);animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.busy-box b{display:block;font-size:15.5px}
+.busy-box span{display:block;margin-top:4px;font-size:13px;color:var(--muted);word-break:break-word}
+.toast{position:fixed;z-index:3100;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 104px);transform:translate(-50%,20px);
+  max-width:min(420px,90vw);padding:11px 16px;border-radius:14px;background:var(--pine);color:#fff;font-size:14px;font-weight:600;
+  box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;text-align:center}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.err{background:var(--bad)}
+
+/* marcador do GPS */
+.me-icon{background:none;border:0}
+.me{position:relative;width:22px;height:22px}
+.me .pulse{position:absolute;inset:-9px;border-radius:50%;background:rgba(47,123,246,.3);animation:pulse 2.2s ease-out infinite}
+.me .dot{position:absolute;inset:2px;border-radius:50%;background:var(--gps);border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4)}
+.me .cone{position:absolute;left:-24px;top:-24px;width:70px;height:70px;display:none;transition:transform .15s linear}
+.me.has-heading .cone{display:block}
+@keyframes pulse{0%{transform:scale(.5);opacity:1}100%{transform:scale(1.6);opacity:0}}
+@media (prefers-reduced-motion:reduce){.me .pulse,.live.on{animation:none}.sheet{transition:none}}
+</style>
 </head>
-<body data-tab="map">
+<body>
+<div id="map" aria-label="Mapa"></div>
 
-<nav id="tabs" aria-label="Seções">
-  <img class="rail-mark" src="assets/mark.png" alt="MGEO">
-  <button data-tab="map" aria-current="true"><svg viewBox="0 0 24 24"><path d="M9 4 3 6.5v13L9 17l6 3 6-2.5v-13L15 7 9 4Zm0 0v13m6-10v13"/></svg><span>Mapa</span></button>
-  <button data-tab="farms"><svg viewBox="0 0 24 24"><path d="M4 20V10l8-6 8 6v10h-5v-6H9v6H4Z"/></svg><span>Fazendas</span></button>
-  <button data-tab="bi"><svg viewBox="0 0 24 24"><path d="M5 20V11m7 9V4m7 16v-6"/></svg><span>Indicadores</span></button>
-  <button data-tab="data"><svg viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Zm0 0v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>Dados</span><i id="pend-dot" hidden></i></button>
-</nav>
+<header class="topbar">
+  <button class="brand panel" id="btnBrand" aria-label="Abrir lista de mapas">
+    <span class="logo"><svg width="20" height="24" viewBox="0 0 20 24"><path d="M10 0C4.5 0 0 4.4 0 9.8 0 16.6 10 24 10 24s10-7.4 10-14.2C20 4.4 15.5 0 10 0Z" fill="#F2C230"/><circle cx="10" cy="9.6" r="3.9" fill="#102A24"/></svg></span>
+    <span class="brand-txt"><b>MGEO PDF</b><span id="mapName">Nenhum mapa aberto</span></span>
+  </button>
+  <span class="pill-off" id="pillOff" hidden>Offline</span>
+  <button class="me-btn panel" id="btnMe" aria-label="Meu perfil" hidden><span id="meInitials">?</span></button>
+</header>
 
-<aside id="panel">
-  <header class="brand">
-    <span class="logo-chip"><img src="assets/logo.png" alt="MGEO, soluções em agricultura de precisão e geotecnologia"></span>
-    <span id="net" class="net">online</span>
-  </header>
+<div class="fabs">
+  <button class="fab panel" id="btnLayers" aria-label="Camadas e fundo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+  </button>
+  <button class="fab panel" id="btnFit" aria-label="Enquadrar o GeoPDF" disabled>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg>
+  </button>
+  <button class="fab panel" id="btnLocate" aria-label="Minha localização">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/><path d="M12 1.5V5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
+  </button>
+</div>
 
-  <section id="v-farms" class="view">
-    <h1>Fazendas</h1>
-    <input id="q" type="search" placeholder="Fazenda, associado, FA ou município" autocomplete="off">
-    <p id="q-count" class="muted"></p>
-    <ul id="farm-list" class="farm-list"></ul>
-  </section>
-
-  <section id="v-bi" class="view">
-    <h1>Indicadores</h1>
-    <div class="filters">
-      <label>Safra<select id="f-safra"></select></label>
-      <label>Técnico<select id="f-tec"></select></label>
-      <label>Município<select id="f-mun"></select></label>
+<div class="bottom">
+  <button class="gps panel" id="gpsCard" aria-label="Precisão e coordenadas do GPS. Toque para mudar o formato.">
+    <div class="meter" id="meter">
+      <svg viewBox="0 0 54 54"><circle class="track" cx="27" cy="27" r="23" stroke-width="5"/><circle class="bar" id="meterBar" cx="27" cy="27" r="23" stroke-width="5" stroke-dasharray="144.5" stroke-dashoffset="144.5"/></svg>
+      <div class="val num" id="accVal">–<small>metros</small></div>
     </div>
-    <div id="bi"></div>
-  </section>
+    <div class="gps-body">
+      <div class="gps-top"><i class="live" id="live"></i><span id="gpsState">GPS desligado</span></div>
+      <div class="coord num" id="coord">Toque em ⌖ para ver sua posição</div>
+      <div class="gps-meta num" id="gpsMeta"></div>
+    </div>
+  </button>
+  <button class="btn-maps" id="btnMaps" aria-label="Meus mapas">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"><path d="m9 4-6 2.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5L9 4Z"/><path d="M9 4v13.5M15 6.5V20"/></svg>
+    Mapas
+    <span class="badge num" id="badge" hidden>0</span>
+  </button>
+</div>
 
-  <section id="v-data" class="view">
-    <h1>Dados</h1>
-    <div id="data"></div>
-  </section>
-</aside>
+<div class="scrim" id="scrim"></div>
 
-<main id="mapwrap">
-  <div id="map"></div>
-
-  <button id="search-pill" class="pill"><img src="assets/mark.png" alt=""><span>Buscar fazenda</span></button>
-
-  <div class="fabs">
-    <button id="btn-layers" title="Temas e rótulos" aria-label="Temas e rótulos"><svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg></button>
-    <button id="btn-ndvi" title="Modo NDVI: imagem de todas as fazendas" aria-label="Modo NDVI"><svg viewBox="0 0 24 24"><path d="M5 19c0-9 5-14 15-14 0 10-5 15-14 15M5 19l8-8"/></svg></button>
-    <button id="btn-gps" title="Onde estou" aria-label="Onde estou"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg></button>
+<section class="sheet" id="sheetLib" aria-label="Meus GeoPDFs">
+  <div class="grab"></div>
+  <div class="sheet-head">
+    <h2>Meus GeoPDFs</h2>
+    <button class="btn btn-primary" id="btnImport">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Importar
+    </button>
   </div>
-
-  <div id="layers" class="card pop" hidden>
-    <label>Colorir talhões por
-      <select id="theme">
-        <option value="corte">Corte</option>
-        <option value="varied">Variedade</option>
-        <option value="mes">Mês da colheita</option>
-        <option value="colhido">Colhido na safra atual</option>
-        <option value="tecnico">Técnico</option>
-        <option value="usina">Usina</option>
-        <option value="ndvi">NDVI (imagem de todas as fazendas)</option>
-      </select>
-    </label>
-    <label>Rótulo
-      <select id="label">
-        <option value="talhao">Talhão</option>
-        <option value="varied">Variedade</option>
-        <option value="corte">Corte</option>
-        <option value="area">Área (ha)</option>
-        <option value="faz">Fazenda</option>
-        <option value="">Sem rótulo</option>
-      </select>
-    </label>
-    <label>Mês do NDVI<select id="nd-month"></select></label>
-    <label>Classes do NDVI
-      <select id="nd-n">
-        <option value="4">Quartis (4 classes)</option>
-        <option value="5">Quintis (5 classes, com amarelo)</option>
-      </select>
-    </label>
-    <label>Cortes das classes
-      <select id="nd-basis">
-        <option value="farm">Dentro de cada fazenda</option>
-        <option value="all">Iguais para todas as fazendas</option>
-      </select>
-    </label>
-    <label class="check"><input type="checkbox" id="nd-smooth" checked> Suavizar zonas do NDVI</label>
-    <label class="check"><input type="checkbox" id="tg-ref" checked> Nomes e estradas</label>
-    <label>Transparência dos talhões <input type="range" id="opac" min="0" max="90" value="55"></label>
+  <div class="sheet-body">
+    <ul class="list" id="list"></ul>
+    <div class="storage num" id="storage"></div>
+    <div class="install" id="installBox" hidden></div>
   </div>
+</section>
 
-  <div id="legend" class="card"></div>
-  <div id="sheet" class="card" hidden></div>
-</main>
+<section class="sheet" id="sheetLayers" aria-label="Camadas">
+  <div class="grab"></div>
+  <div class="sheet-head"><h2>Camadas</h2></div>
+  <div class="sheet-body">
+    <div class="label">Fundo do mapa</div>
+    <div class="seg" id="baseSeg">
+      <button data-b="m"><div class="swatch sw-m"></div>Mapa</button>
+      <button data-b="s"><div class="swatch sw-s"></div>Satélite</button>
+      <button data-b="y"><div class="swatch sw-y"></div>Híbrido</button>
+      <button data-b="n"><div class="swatch sw-n"></div>Nenhum</button>
+    </div>
+    <div class="label">GeoPDF</div>
+    <div class="row"><div>Mostrar GeoPDF</div><label class="switch"><input type="checkbox" id="swPdf" checked><span></span></label></div>
+    <div class="row"><div>Opacidade do GeoPDF<small id="opLbl">100%</small></div><input type="range" id="opacity" min="10" max="100" value="100"></div>
+    <div class="label">Localização</div>
+    <div class="row"><div>GPS ativo<small>Atualiza enquanto você anda</small></div><label class="switch"><input type="checkbox" id="swGps"><span></span></label></div>
+    <div class="row"><div>Manter tela ligada<small>Enquanto o GPS estiver ativo</small></div><label class="switch"><input type="checkbox" id="swWake" checked><span></span></label></div>
+  </div>
+</section>
 
-<div id="toast" role="status" aria-live="polite"></div>
-<input type="file" id="file" accept=".geojson,.json,application/geo+json" hidden>
+<div class="busy" id="busy"><div class="busy-box"><div class="spin"></div><b id="busyT">Processando…</b><span id="busyS"></span></div></div>
+<div class="toast" id="toast" role="status"></div>
+<input type="file" id="file" accept="application/pdf,.pdf" multiple hidden>
 
-<script src="vendor/leaflet.js"></script>
-<script src="js/app.js"></script>
+<script src="lib/leaflet.js"></script>
+<script src="lib/pdf.min.js"></script>
+<script src="lib/pdf-lib.min.js"></script>
+<script src="lib/supabase.js"></script>
+<script src="config.js"></script>
+<script src="tiles.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('mgeo:'+k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('mgeo:'+k, JSON.stringify(v)); }catch(e){} }
+};
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
+
+/* ---------- avisos ---------- */
+let toastT;
+function toast(msg, err){
+  const t = $('#toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(toastT); toastT = setTimeout(() => t.className = 'toast', err ? 4500 : 2600);
+}
+function busy(on, title, sub){
+  $('#busy').classList.toggle('show', !!on);
+  if (title) $('#busyT').textContent = title;
+  $('#busyS').textContent = sub || '';
+}
+const tick = () => new Promise(r => setTimeout(r, 30));
+
+/* ---------- banco local (IndexedDB) ---------- */
+const DB = {
+  db: null,
+  open(){ return new Promise((res, rej) => {
+    const r = indexedDB.open('mgeo-pdf', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('maps', { keyPath: 'id' });
+    r.onsuccess = () => { this.db = r.result; res(); };
+    r.onerror = () => rej(r.error);
+  }); },
+  run(mode, fn){ return new Promise((res, rej) => {
+    const tx = this.db.transaction('maps', mode); const st = tx.objectStore('maps');
+    const rq = fn(st); let out;
+    if (rq) rq.onsuccess = () => out = rq.result;
+    tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error('Sem espaço de armazenamento'));
+  }); },
+  all(){ return this.run('readonly', s => s.getAll()); },
+  get(id){ return this.run('readonly', s => s.get(id)); },
+  put(o){ return this.run('readwrite', s => s.put(o)); },
+  del(id){ return this.run('readwrite', s => s.delete(id)); }
+};
+
+/* ---------- mapa ---------- */
+const map = L.map('map', { zoomControl:false, attributionControl:true, maxZoom:22, minZoom:2, worldCopyJump:true, tap:false })
+  .setView([-14.2, -51.9], 4);
+map.attributionControl.setPrefix(false);
+map.attributionControl.setPosition('topright');
+L.control.scale({ imperial:false, position:'topright' }).addTo(map);
+map.createPane('geopdf').style.zIndex = 350;
+map.createPane('gps').style.zIndex = 640;
+
+const gUrl = l => `https://mt{s}.google.com/vt/lyrs=${l}&hl=pt-BR&x={x}&y={y}&z={z}`;
+const tileOpt = { subdomains:'0123', maxZoom:22, maxNativeZoom:20, attribution:'Imagens © Google' };
+const bases = { m: new OfflineTileLayer('m', gUrl('m'), tileOpt), s: new OfflineTileLayer('s', gUrl('s'), tileOpt), y: new OfflineTileLayer('y', gUrl('y'), tileOpt), n: null };
+let baseKey = null;
+function setBase(k){
+  if (baseKey && bases[baseKey]) map.removeLayer(bases[baseKey]);
+  baseKey = k; if (bases[k]) bases[k].addTo(map);
+  document.querySelectorAll('#baseSeg button').forEach(b => b.classList.toggle('sel', b.dataset.b === k));
+  store.set('base', k);
+}
+setBase(store.get('base', 's'));
+
+/* camada do GeoPDF: imagem posicionada por transformação afim (aceita mapas rotacionados) */
+const GeoImage = L.Layer.extend({
+  initialize(url, corners, w, h, opacity){ this._url = url; this._c = corners; this._w = w; this._h = h; this._op = opacity; },
+  onAdd(map){
+    const img = this._img = L.DomUtil.create('img', 'geo-img leaflet-image-layer ' + (map._zoomAnimated ? 'leaflet-zoom-animated' : 'leaflet-zoom-hide'));
+    img.src = this._url; img.alt = ''; img.draggable = false;
+    img.style.width = this._w + 'px'; img.style.height = this._h + 'px'; img.style.opacity = this._op;
+    map.getPane('geopdf').appendChild(img); this._reset();
+  },
+  onRemove(){ L.DomUtil.remove(this._img); this._img = null; },
+  getEvents(){ const e = { zoom:this._reset, viewreset:this._reset }; if (this._map._zoomAnimated) e.zoomanim = this._anim; return e; },
+  _set(fn){
+    const c = this._c, W = this._w, H = this._h, a = fn(c.tl), b = fn(c.tr), d = fn(c.bl);
+    this._img.style.transform = `matrix(${(b.x-a.x)/W},${(b.y-a.y)/W},${(d.x-a.x)/H},${(d.y-a.y)/H},${a.x},${a.y})`;
+  },
+  _reset(){ const m = this._map; this._set(ll => m.project(ll)._subtract(m.getPixelOrigin())); },
+  _anim(e){ const m = this._map; this._set(ll => m._latLngToNewLayerPoint(ll, e.zoom, e.center)); },
+  setOpacity(o){ this._op = o; if (this._img) this._img.style.opacity = o; }
+});
+
+/* ---------- leitura da georreferência do GeoPDF ---------- */
+async function findGeo(bytes){
+  try { const r = await geoFromPdfLib(bytes); if (r) return r; } catch(e){ console.warn('pdf-lib', e); }
+  return geoFromRaw(bytes);
+}
+async function geoFromPdfLib(bytes){
+  const { PDFDocument, PDFName, PDFArray, PDFDict, PDFNumber, PDFRef, ParseSpeeds } = PDFLib;
+  const doc = await PDFDocument.load(bytes, { ignoreEncryption:true, updateMetadata:false, throwOnInvalidObject:false, parseSpeed:ParseSpeeds.Fastest });
+  const ctx = doc.context;
+  const R = o => o instanceof PDFRef ? ctx.lookup(o) : o;
+  const nums = a => { a = R(a); if (!(a instanceof PDFArray)) return null; return a.asArray().map(x => { x = R(x); return x instanceof PDFNumber ? x.asNumber() : NaN; }); };
+  const pages = doc.getPages();
+  for (let i = 0; i < pages.length; i++){
+    const mb = pages[i].getMediaBox(), page = [mb.x, mb.y, mb.x + mb.width, mb.y + mb.height];
+    const vp = R(pages[i].node.get(PDFName.of('VP')));
+    if (!(vp instanceof PDFArray)) continue;
+    let best = null;
+    for (const e of vp.asArray()){
+      const d = R(e); if (!(d instanceof PDFDict)) continue;
+      const m = R(d.get(PDFName.of('Measure'))); if (!(m instanceof PDFDict)) continue;
+      const st = R(m.get(PDFName.of('Subtype'))); if (st && String(st) !== '/GEO') continue;
+      const g = nums(m.get(PDFName.of('GPTS'))); if (!g || g.length < 6) continue;
+      const l = nums(m.get(PDFName.of('LPTS')));
+      const bb = nums(d.get(PDFName.of('BBox')));
+      // ArcGIS/QGIS gravam vários quadros; vale o que está DENTRO da página e for maior
+      const area = bb && bb.length >= 4 ? overlap(bb, page) : 0.5 * mb.width * mb.height;
+      if (area <= 0) continue;
+      if (!best || area > best.area) best = { pageIndex:i, bbox: bb && bb.length >= 4 ? bb : null, g, l, area };
+    }
+    if (best) return best;
+  }
+  return null;
+}
+function overlap(a, b){
+  const ax1 = Math.min(a[0], a[2]), ax2 = Math.max(a[0], a[2]), ay1 = Math.min(a[1], a[3]), ay2 = Math.max(a[1], a[3]);
+  const w = Math.min(ax2, b[2]) - Math.max(ax1, b[0]), h = Math.min(ay2, b[3]) - Math.max(ay1, b[1]);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+function geoFromRaw(bytes){
+  let s = ''; const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  const arr = (key, from, to) => {
+    const sub = s.slice(Math.max(0, from), to); const re = new RegExp('/' + key + '\\s*\\[([^\\]]*)\\]', 'g');
+    let m, last = null; while ((m = re.exec(sub))) last = m[1];
+    return last ? last.trim().split(/\s+/).map(Number) : null;
+  };
+  const gi = s.indexOf('/GPTS'); if (gi < 0) return null;
+  const g = arr('GPTS', gi, gi + 600); if (!g || g.length < 6) return null;
+  const l = arr('LPTS', gi - 600, gi + 600);
+  const bb = arr('BBox', gi - 1500, gi);
+  return { pageIndex:0, bbox: bb && bb.length >= 4 ? bb : null, g, l };
+}
+function controlPoints(geo, view){
+  const bb = geo.bbox || view;
+  const x1 = Math.min(bb[0], bb[2]), x2 = Math.max(bb[0], bb[2]), y1 = Math.min(bb[1], bb[3]), y2 = Math.max(bb[1], bb[3]);
+  const n = Math.floor(geo.g.length / 2);
+  let l = geo.l;
+  if (!l || l.length < 2 * n) l = [0,0, 0,1, 1,1, 1,0, 0.5,0.5].slice(0, 2 * n);
+  const pts = [];
+  for (let i = 0; i < n; i++){
+    let lat = geo.g[2*i], lon = geo.g[2*i+1];
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];
+    if (![lat, lon, l[2*i], l[2*i+1]].every(Number.isFinite)) continue;
+    pts.push({ X: x1 + l[2*i] * (x2 - x1), Y: y1 + l[2*i+1] * (y2 - y1), lat, lon });
+  }
+  return { bbox:[x1, y1, x2, y2], pts };
+}
+/* ajuste afim por mínimos quadrados: pixel -> Web Mercator */
+function fitAffine(P){
+  const n = P.length; let mx = 0, my = 0; P.forEach(p => { mx += p.px; my += p.py; }); mx /= n; my /= n;
+  let sxx=0, sxy=0, syy=0, sx=0, sy=0;
+  P.forEach(p => { const x = p.px-mx, y = p.py-my; sxx+=x*x; sxy+=x*y; syy+=y*y; sx+=x; sy+=y; });
+  const M = [[sxx,sxy,sx],[sxy,syy,sy],[sx,sy,n]];
+  const solve = key => {
+    let bx=0, by=0, b1=0; P.forEach(p => { const x=p.px-mx, y=p.py-my; bx+=x*p[key]; by+=y*p[key]; b1+=p[key]; });
+    const A = M.map((r,i) => [...r, [bx,by,b1][i]]);
+    for (let c = 0; c < 3; c++){
+      let piv = c; for (let r = c+1; r < 3; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+      [A[c], A[piv]] = [A[piv], A[c]];
+      if (Math.abs(A[c][c]) < 1e-12) throw new Error('Pontos de controle inválidos neste GeoPDF.');
+      for (let r = 0; r < 3; r++) if (r !== c){ const f = A[r][c] / A[c][c]; for (let k = c; k < 4; k++) A[r][k] -= f * A[c][k]; }
+    }
+    return [A[0][3]/A[0][0], A[1][3]/A[1][1], A[2][3]/A[2][2]];
+  };
+  const ax = solve('mx'), ay = solve('my');
+  return (x, y) => [ax[0]*(x-mx) + ax[1]*(y-my) + ax[2], ay[0]*(x-mx) + ay[1]*(y-my) + ay[2]];
+}
+
+/* ---------- importação ---------- */
+/* desenha uma região da página; devolve o canvas e a posição de recorte */
+async function renderRegion(page, region, ocCfg){
+  const v1 = page.getViewport({ scale:1 });
+  const a1 = v1.convertToViewportPoint(region[0], region[1]), b1 = v1.convertToViewportPoint(region[2], region[3]);
+  const bw = Math.max(1, Math.abs(b1[0]-a1[0])), bh = Math.max(1, Math.abs(b1[1]-a1[1]));
+  const MAXD = 4096, MAXA = 16e6;
+  let scale = Math.min(MAXD / Math.max(bw, bh), 8);
+  if (bw * bh * scale * scale > MAXA) scale = Math.sqrt(MAXA / (bw * bh));
+  const vp = page.getViewport({ scale });
+  const p1 = vp.convertToViewportPoint(region[0], region[1]), p2 = vp.convertToViewportPoint(region[2], region[3]);
+  const cx = Math.min(p1[0], p2[0]), cy = Math.min(p1[1], p2[1]);
+  const W = Math.max(1, Math.round(Math.abs(p2[0]-p1[0]))), H = Math.max(1, Math.round(Math.abs(p2[1]-p1[1])));
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  const params = { canvasContext:ctx, viewport:vp, transform:[1,0,0,1,-cx,-cy] };
+  if (ocCfg) params.optionalContentConfigPromise = Promise.resolve(ocCfg);
+  await page.render(params).promise;
+  return { canvas, vp, cx, cy, W, H };
+}
+/* fração de pixels com conteúdo (não brancos) */
+function inkRatio(canvas){
+  const t = document.createElement('canvas'); t.width = t.height = 96;
+  const c = t.getContext('2d', { willReadFrequently:true }); c.drawImage(canvas, 0, 0, 96, 96);
+  const d = c.getImageData(0, 0, 96, 96).data; let ink = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] < 250 || d[i+1] < 250 || d[i+2] < 250) ink++;
+  return ink / (96 * 96);
+}
+
+async function processPdf(name, size, buf){
+  const bytes = new Uint8Array(buf);
+  busy(true, 'Lendo georreferência', name); await tick();
+  const geo = await findGeo(bytes.slice());
+  if (!geo) throw new Error(`“${name}” não tem georreferência. Exporte o mapa como GeoPDF e tente de novo.`);
+
+  busy(true, 'Desenhando o mapa', 'Pode levar alguns segundos'); await tick();
+  const pdf = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported:false, disableFontFace:false, useSystemFonts:true }).promise;
+  const page = await pdf.getPage(geo.pageIndex + 1);
+  const cp = controlPoints(geo, page.view);
+  if (cp.pts.length < 3) throw new Error('O GeoPDF tem poucos pontos de controle para posicionar o mapa.');
+
+  // 1ª tentativa: só a área do mapa, camadas como vieram no PDF
+  let r = await renderRegion(page, cp.bbox, null);
+  let ratio = inkRatio(r.canvas);
+  if (ratio < 0.03){
+    // 2ª: liga todas as camadas (OCG) do PDF
+    let oc = null;
+    try { oc = await pdf.getOptionalContentConfig(); const g = oc.getGroups(); if (g) for (const id in g) oc.setVisibility(id, true); else oc = null; } catch(_){ oc = null; }
+    const tries = [];
+    if (oc) tries.push([cp.bbox, oc]);
+    tries.push([page.view, oc, true]); // 3ª: página inteira (caso a área do mapa no PDF esteja deslocada)
+    for (const [reg, cfg, onlyIfBlank] of tries){
+      if (onlyIfBlank && ratio >= 0.002) break;
+      busy(true, 'Desenhando o mapa', 'Ajustando camadas do PDF…'); await tick();
+      const r2 = await renderRegion(page, reg, cfg); const q = inkRatio(r2.canvas);
+      if (q > ratio + 0.01){ r.canvas.width = 0; r = r2; ratio = q; } else r2.canvas.width = 0;
+      if (ratio >= 0.03) break;
+    }
+  }
+  const { canvas, vp, cx, cy, W, H } = r;
+
+  const P = cp.pts.map(p => {
+    const v = vp.convertToViewportPoint(p.X, p.Y);
+    const m = L.CRS.EPSG3857.project(L.latLng(p.lat, p.lon));
+    return { px:v[0]-cx, py:v[1]-cy, mx:m.x, my:m.y };
+  });
+  const T = fitAffine(P);
+  const corner = (x, y) => { const m = T(x, y); const ll = L.CRS.EPSG3857.unproject(L.point(m[0], m[1])); return { lat:ll.lat, lng:ll.lng }; };
+  const corners = { tl:corner(0,0), tr:corner(W,0), bl:corner(0,H), br:corner(W,H) };
+
+  busy(true, 'Salvando no celular', name); await tick();
+  const imgBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.9));
+  const tc = document.createElement('canvas'); const ts = 120 / Math.max(W, H);
+  tc.width = Math.max(1, Math.round(W*ts)); tc.height = Math.max(1, Math.round(H*ts));
+  tc.getContext('2d').drawImage(canvas, 0, 0, tc.width, tc.height);
+  const thumb = tc.toDataURL('image/jpeg', 0.75);
+  canvas.width = canvas.height = 0;
+  pdf.destroy();
+  return { w:W, h:H, corners, thumb, img: await imgBlob.arrayBuffer(), blank: ratio < 0.002, v:RENDER_V };
+}
+const RENDER_V = 3;
+
+async function importFile(file){
+  busy(true, 'Abrindo GeoPDF', file.name); await tick();
+  const buf = await file.arrayBuffer();
+  const out = await processPdf(file.name, file.size, buf);
+  const rec = Object.assign({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    name: file.name.replace(/\.pdf$/i, ''), size: file.size, added: Date.now(), pdf: buf
+  }, out);
+  await DB.put(rec);
+  if (rec.blank) toast('O PDF foi posicionado, mas o conteúdo saiu em branco. Envie o arquivo para análise.', true);
+  return rec;
+}
+
+$('#file').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch(_){}
+  let last = null, ok = 0;
+  for (const f of files){
+    try { last = await importFile(f); ok++; }
+    catch(err){ console.error(err); busy(false); toast(err.message || 'Não foi possível ler este PDF.', true); await new Promise(r => setTimeout(r, 1500)); }
+  }
+  busy(false);
+  await renderList();
+  if (last){ toast(ok > 1 ? `${ok} mapas salvos no celular` : 'Mapa salvo no celular'); openMap(last.id); }
+});
+
+/* ---------- abrir / lista ---------- */
+let current = null;
+function overlayOpacity(){ return Number($('#opacity').value) / 100; }
+async function openMap(id, fit = true){
+  let rec = await DB.get(id);
+  if (!rec){ store.set('last', null); return; }
+  if ((rec.v || 1) < RENDER_V && rec.pdf){
+    try { Object.assign(rec, await processPdf(rec.name, rec.size, rec.pdf)); await DB.put(rec); }
+    catch(e){ console.warn(e); }
+    busy(false);
+  }
+  if (current){ map.removeLayer(current.layer); URL.revokeObjectURL(current.url); }
+  const url = URL.createObjectURL(new Blob([rec.img], { type:'image/jpeg' }));
+  const layer = new GeoImage(url, rec.corners, rec.w, rec.h, overlayOpacity());
+  if ($('#swPdf').checked) layer.addTo(map);
+  const c = rec.corners;
+  current = { id, layer, url, name:rec.name, bounds:L.latLngBounds([c.tl, c.tr, c.bl, c.br]),
+    poly:[c.tl, c.tr, c.br, c.bl] };
+  if (fit) map.fitBounds(current.bounds, { padding:[24, 24] });
+  $('#mapName').textContent = rec.name;
+  $('#btnFit').disabled = false;
+  store.set('last', id);
+  closeSheets(); renderList(); if (lastFix) renderGps();
+}
+const fmtSize = b => b > 1048576 ? (b/1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b/1024)) + ' KB';
+const fmtDate = t => new Date(t).toLocaleDateString('pt-BR', { day:'2-digit', month:'short', year:'numeric' });
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]); }
+
+async function renderList(){
+  const items = (await DB.all()).sort((a, b) => b.added - a.added);
+  const ul = $('#list');
+  $('#badge').hidden = !items.length; $('#badge').textContent = items.length;
+  if (!items.length){
+    ul.innerHTML = `<li class="empty"><b>Nenhum GeoPDF salvo</b>Toque em Importar e escolha um GeoPDF do celular. Ele fica guardado aqui e abre mesmo sem internet.</li>`;
+  } else {
+    ul.innerHTML = items.map(r => `
+      <li class="item${current && current.id === r.id ? ' active' : ''}">
+        <button class="item-open" data-open="${r.id}">
+          <img class="thumb" src="${r.thumb}" alt="">
+          <span class="item-info"><b>${esc(r.name)}</b><span>${fmtSize(r.size)}, salvo em ${fmtDate(r.added)}</span></span>
+        </button>
+        <button class="icon-btn" data-ren="${r.id}" aria-label="Renomear ${esc(r.name)}">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/></svg>
+        </button>
+        <button class="icon-btn" data-del="${r.id}" aria-label="Excluir ${esc(r.name)}">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+        </button>
+      </li>`).join('');
+  }
+  try {
+    const est = await navigator.storage.estimate();
+    $('#storage').textContent = `Espaço usado no celular: ${fmtSize(est.usage || 0)}`;
+  } catch(_){ $('#storage').textContent = ''; }
+}
+$('#list').addEventListener('click', async e => {
+  const o = e.target.closest('[data-open]'), d = e.target.closest('[data-del]'), r = e.target.closest('[data-ren]');
+  if (o) openMap(o.dataset.open);
+  if (r){
+    const rec = await DB.get(r.dataset.ren); const name = prompt('Novo nome do mapa', rec.name);
+    if (name && name.trim()){ rec.name = name.trim(); await DB.put(rec); if (current && current.id === rec.id){ current.name = rec.name; $('#mapName').textContent = rec.name; } renderList(); }
+  }
+  if (d){
+    const rec = await DB.get(d.dataset.del);
+    if (!confirm(`Excluir “${rec.name}” do celular?`)) return;
+    await DB.del(rec.id);
+    if (current && current.id === rec.id){
+      map.removeLayer(current.layer); URL.revokeObjectURL(current.url); current = null;
+      $('#mapName').textContent = 'Nenhum mapa aberto'; $('#btnFit').disabled = true; store.set('last', null);
+    }
+    toast('Mapa excluído'); renderList();
+  }
+});
+
+/* ---------- folhas ---------- */
+function openSheet(id){ closeSheets(); $(id).classList.add('open'); $('#scrim').classList.add('show'); }
+function closeSheets(){ document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open')); $('#scrim').classList.remove('show'); }
+$('#scrim').onclick = closeSheets;
+$('#btnMaps').onclick = $('#btnBrand').onclick = () => { renderList(); renderInstall(); openSheet('#sheetLib'); };
+$('#btnLayers').onclick = () => openSheet('#sheetLayers');
+$('#btnImport').onclick = () => $('#file').click();
+$('#btnFit').onclick = () => { if (current){ follow = false; updateLocateBtn(); map.fitBounds(current.bounds, { padding:[24, 24] }); } };
+$('#baseSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setBase(b.dataset.b); });
+$('#opacity').addEventListener('input', e => {
+  $('#opLbl').textContent = e.target.value + '%'; if (current) current.layer.setOpacity(overlayOpacity()); store.set('op', e.target.value);
+});
+$('#swPdf').addEventListener('change', e => { if (current){ e.target.checked ? current.layer.addTo(map) : map.removeLayer(current.layer); } });
+$('#swGps').addEventListener('change', e => e.target.checked ? startGPS(true) : stopGPS());
+$('#swWake').addEventListener('change', e => { store.set('wake', e.target.checked); e.target.checked ? requestWake() : releaseWake(); });
+// arrastar a folha para baixo fecha
+document.querySelectorAll('.sheet').forEach(sh => {
+  let y0 = null;
+  sh.addEventListener('touchstart', e => { y0 = (sh.querySelector('.sheet-body').scrollTop <= 0) ? e.touches[0].clientY : null; }, { passive:true });
+  sh.addEventListener('touchend', e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 70) closeSheets(); y0 = null; });
+});
+
+/* ---------- GPS em tempo real ---------- */
+let watchId = null, follow = false, meMarker = null, accCircle = null, lastFix = null, lastFixAt = 0, firstFix = true;
+let compassHeading = null, coordFmt = store.get('fmt', 0), wakeLock = null;
+const meIcon = L.divIcon({ className:'me-icon', iconSize:[22, 22], iconAnchor:[11, 11],
+  html:`<div class="me"><svg class="cone" viewBox="0 0 70 70"><defs><radialGradient id="cg" cx="35" cy="35" r="35" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2F7BF6" stop-opacity=".55"/><stop offset="1" stop-color="#2F7BF6" stop-opacity="0"/></radialGradient></defs><path d="M35 35 L20 2 A35 35 0 0 1 50 2 Z" fill="url(#cg)"/></svg><div class="pulse"></div><div class="dot"></div></div>` });
+
+function startGPS(user){
+  if (!('geolocation' in navigator)){ toast('Este navegador não oferece GPS.', true); return; }
+  if (watchId === null){
+    watchId = navigator.geolocation.watchPosition(onPos, onPosErr, { enableHighAccuracy:true, maximumAge:0, timeout:30000 });
+    $('#gpsState').textContent = 'Procurando sinal…';
+  }
+  if (user) startCompass();
+  $('#swGps').checked = true; store.set('gps', true);
+  requestWake(); updateLocateBtn();
+}
+function stopGPS(){
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null; follow = false; lastFix = null; firstFix = true;
+  if (meMarker){ map.removeLayer(meMarker); map.removeLayer(accCircle); meMarker = accCircle = null; }
+  $('#swGps').checked = false; store.set('gps', false); releaseWake();
+  $('#gpsState').textContent = 'GPS desligado'; $('#coord').textContent = 'Toque em ⌖ para ver sua posição';
+  $('#gpsMeta').innerHTML = ''; $('#accVal').innerHTML = '–<small>metros</small>'; $('#live').className = 'live';
+  $('#meter').className = 'meter'; $('#meterBar').style.strokeDashoffset = 144.5;
+  updateLocateBtn();
+}
+function onPos(p){
+  lastFix = p.coords; lastFixAt = Date.now();
+  const ll = [lastFix.latitude, lastFix.longitude];
+  if (!meMarker){
+    accCircle = L.circle(ll, { radius:lastFix.accuracy, pane:'gps', renderer:L.svg({ pane:'gps' }), color:'#2F7BF6', weight:1.5, fillColor:'#2F7BF6', fillOpacity:.13, interactive:false }).addTo(map);
+    meMarker = L.marker(ll, { icon:meIcon, pane:'gps', interactive:false, keyboard:false }).addTo(map);
+  } else { meMarker.setLatLng(ll); accCircle.setLatLng(ll); accCircle.setRadius(lastFix.accuracy); }
+  if (firstFix && follow){ map.setView(ll, Math.max(map.getZoom(), 17)); }
+  else if (follow){ map.panTo(ll, { animate:true, duration:.5 }); }
+  firstFix = false;
+  renderGps(); updateHeading();
+}
+function onPosErr(err){
+  const msg = { 1:'Permissão de localização negada. Libere nos ajustes do navegador.', 2:'Sinal de GPS indisponível no momento.', 3:'O GPS demorou para responder. Tentando de novo…' }[err.code] || 'Erro no GPS.';
+  $('#gpsState').textContent = err.code === 1 ? 'Sem permissão' : 'Sem sinal';
+  toast(msg, true);
+  if (err.code === 1) stopGPS();
+}
+const toRad = d => d * Math.PI / 180;
+function toUTM(lat, lon){
+  const a = 6378137, f = 1/298.257223563, k0 = 0.9996, e2 = f*(2-f), ep2 = e2/(1-e2);
+  const zone = Math.min(60, Math.floor((lon + 180) / 6) + 1), lon0 = toRad((zone - 1) * 6 - 180 + 3);
+  const φ = toRad(lat), N = a / Math.sqrt(1 - e2*Math.sin(φ)**2), T = Math.tan(φ)**2, C = ep2*Math.cos(φ)**2, A = Math.cos(φ)*(toRad(lon) - lon0);
+  const M = a*((1 - e2/4 - 3*e2*e2/64 - 5*e2**3/256)*φ - (3*e2/8 + 3*e2*e2/32 + 45*e2**3/1024)*Math.sin(2*φ) + (15*e2*e2/256 + 45*e2**3/1024)*Math.sin(4*φ) - (35*e2**3/3072)*Math.sin(6*φ));
+  const E = k0*N*(A + (1-T+C)*A**3/6 + (5-18*T+T*T+72*C-58*ep2)*A**5/120) + 500000;
+  let Nn = k0*(M + N*Math.tan(φ)*(A*A/2 + (5-T+9*C+4*C*C)*A**4/24 + (61-58*T+T*T+600*C-330*ep2)*A**6/720));
+  if (lat < 0) Nn += 10000000;
+  const band = 'CDEFGHJKLMNPQRSTUVWXX'[Math.floor((lat + 80) / 8)] || '';
+  return `${zone}${band}  ${Math.round(E).toLocaleString('pt-BR')} E  ${Math.round(Nn).toLocaleString('pt-BR')} N`;
+}
+function dms(v, pos, neg){
+  const s = v < 0 ? neg : pos; v = Math.abs(v);
+  const d = Math.floor(v), mf = (v - d) * 60, m = Math.floor(mf), sec = (mf - m) * 60;
+  return `${d}°${String(m).padStart(2, '0')}′${sec.toFixed(1).replace('.', ',').padStart(4, '0')}″${s}`;
+}
+function coordText(c){
+  if (coordFmt === 1) return dms(c.latitude, 'N', 'S') + '  ' + dms(c.longitude, 'L', 'O');
+  if (coordFmt === 2) return 'UTM ' + toUTM(c.latitude, c.longitude);
+  return c.latitude.toFixed(6) + ', ' + c.longitude.toFixed(6);
+}
+function inside(ll, poly){
+  let ins = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++){
+    const xi = poly[i].lng, yi = poly[i].lat, xj = poly[j].lng, yj = poly[j].lat;
+    if (((yi > ll.lat) !== (yj > ll.lat)) && (ll.lng < (xj - xi) * (ll.lat - yi) / (yj - yi) + xi)) ins = !ins;
+  }
+  return ins;
+}
+function renderGps(){
+  const c = lastFix; if (!c) return;
+  const a = c.accuracy;
+  const q = a <= 5 ? ['q-good', 'Excelente', 1] : a <= 15 ? ['q-good', 'Boa', .78] : a <= 40 ? ['q-mid', 'Moderada', .5] : ['q-bad', 'Fraca', .22];
+  $('#meter').className = 'meter ' + q[0];
+  $('#meterBar').style.strokeDashoffset = 144.5 * (1 - q[2]);
+  $('#accVal').innerHTML = `±${a < 10 ? a.toFixed(1).replace('.', ',') : Math.round(a)}<small>metros</small>`;
+  $('#coord').textContent = coordText(c);
+  const meta = [`Precisão ${q[1].toLowerCase()}`];
+  if (c.altitude != null) meta.push(`Alt. ${Math.round(c.altitude)} m`);
+  if (c.speed != null && c.speed > 0.3) meta.push(`${(c.speed * 3.6).toFixed(1).replace('.', ',')} km/h`);
+  let html = meta.map(m => `<span>${m}</span>`).join('');
+  if (current && !inside({ lat:c.latitude, lng:c.longitude }, current.poly)) html += `<span class="warn">Fora do GeoPDF</span>`;
+  $('#gpsMeta').innerHTML = html;
+}
+setInterval(() => {
+  if (watchId === null || !lastFixAt) return;
+  const age = Math.round((Date.now() - lastFixAt) / 1000);
+  const live = $('#live');
+  if (age < 6){ live.className = 'live on'; $('#gpsState').textContent = 'Ao vivo'; }
+  else { live.className = 'live stale'; $('#gpsState').textContent = `Sem atualização há ${age} s`; }
+}, 1000);
+$('#gpsCard').onclick = () => {
+  if (!lastFix){ startGPS(true); follow = true; updateLocateBtn(); return; }
+  coordFmt = (coordFmt + 1) % 3; store.set('fmt', coordFmt); renderGps();
+  toast(['Graus decimais', 'Graus, minutos e segundos', 'UTM (WGS 84)'][coordFmt]);
+};
+
+/* bússola: direção para onde o celular aponta */
+let compassOn = false;
+function startCompass(){
+  if (compassOn) return;
+  const handler = e => {
+    let h = null;
+    if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+    else if (e.absolute && e.alpha != null) h = 360 - e.alpha;
+    if (h == null) return;
+    const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+    compassHeading = (h + ang + 360) % 360; updateHeading();
+  };
+  const listen = () => { compassOn = true;
+    if ('ondeviceorientationabsolute' in window) addEventListener('deviceorientationabsolute', handler, true);
+    else addEventListener('deviceorientation', handler, true); };
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+    DeviceOrientationEvent.requestPermission().then(s => { if (s === 'granted') listen(); }).catch(() => {});
+  } else listen();
+}
+let headingRaf = 0;
+function updateHeading(){
+  if (headingRaf) return;
+  headingRaf = requestAnimationFrame(() => {
+    headingRaf = 0;
+    if (!meMarker) return;
+    const el = meMarker.getElement(); if (!el) return;
+    const me = el.querySelector('.me');
+    let h = compassHeading;
+    if (lastFix && lastFix.speed > 1 && Number.isFinite(lastFix.heading)) h = lastFix.heading;
+    me.classList.toggle('has-heading', h != null);
+    if (h != null) me.querySelector('.cone').style.transform = `rotate(${h}deg)`;
+  });
+}
+
+function updateLocateBtn(){
+  const b = $('#btnLocate');
+  b.classList.toggle('on', watchId !== null && !follow);
+  b.classList.toggle('follow', watchId !== null && follow);
+}
+$('#btnLocate').onclick = () => {
+  if (watchId === null){ follow = true; firstFix = true; startGPS(true); }
+  else { follow = true; startCompass(); if (lastFix) map.setView([lastFix.latitude, lastFix.longitude], Math.max(map.getZoom(), 17)); }
+  updateLocateBtn();
+};
+map.on('dragstart', () => { if (follow){ follow = false; updateLocateBtn(); } });
+
+/* manter a tela ligada */
+async function requestWake(){
+  if (!$('#swWake').checked || watchId === null || !('wakeLock' in navigator) || document.visibilityState !== 'visible' || wakeLock) return;
+  try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); } catch(_){}
+}
+function releaseWake(){ if (wakeLock){ wakeLock.release().catch(() => {}); wakeLock = null; } }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWake(); });
+
+/* ---------- instalação e modo offline ---------- */
+let installEvt = null;
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; renderInstall(); });
+addEventListener('appinstalled', () => { installEvt = null; renderInstall(); toast('MGEO PDF instalado'); });
+function renderInstall(){
+  const box = $('#installBox');
+  if (isStandalone()){ box.hidden = true; return; }
+  box.hidden = false;
+  if (isIOS){
+    box.innerHTML = `<b>Instalar no iPhone</b>No Safari, toque em <svg style="display:inline;vertical-align:-3px" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M8 7l4-4 4 4M5 12v8h14v-8"/></svg> Compartilhar e depois em <b style="display:inline">Adicionar à Tela de Início</b>. O app passa a abrir sem internet.`;
+  } else if (installEvt){
+    box.innerHTML = `<b>Instalar no celular</b>Instale para usar como app, sem internet e em tela cheia.<br><button class="btn btn-primary" id="btnInstall">Instalar MGEO PDF</button>`;
+    $('#btnInstall').onclick = async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; renderInstall(); };
+  } else {
+    box.innerHTML = `<b>Instalar no celular</b>No menu do navegador (⋮), toque em <b style="display:inline">Instalar app</b> ou <b style="display:inline">Adicionar à tela inicial</b>.`;
+  }
+}
+function setOnline(){ $('#pillOff').hidden = navigator.onLine; }
+addEventListener('online', setOnline); addEventListener('offline', setOnline);
+
+/* ---------- início ---------- */
+let appStarted = false;
+window.startApp = async function(){
+  if (appStarted) return; appStarted = true;
+  setOnline();
+  const op = store.get('op', '100'); $('#opacity').value = op; $('#opLbl').textContent = op + '%';
+  $('#swWake').checked = store.get('wake', true);
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')){
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then(() => {
+      if (!had) navigator.serviceWorker.ready.then(() => toast('Pronto para uso offline'));
+    }).catch(err => console.warn('SW', err));
+  }
+  try { await DB.open(); } catch(e){ toast('O navegador bloqueou o armazenamento local. Saia da aba anônima.', true); return; }
+  await renderList();
+  const last = store.get('last', null);
+  if (last) await openMap(last, true);
+  if (store.get('gps', false)) startGPS(false);
+};
+</script>
+<script src="downloads.js"></script>
+<script src="auth.js"></script>
 </body>
 </html>
