@@ -22,6 +22,7 @@ Dockerfile  pronto para o EasyPanel
 4. **Mounts → Add Volume:** nome `mgeo-data`, caminho **`/data`**.
    ⚠️ Sem isso, o banco de dados é apagado a cada atualização.
 5. **Domains:** adicione o domínio (ex.: `pdf.mgeotecnologia.com`), porta **3000**.
+   ⚠️ Se você definir a variável `PORT` (ex.: 80), o domínio precisa usar essa mesma porta.
    O EasyPanel gera o HTTPS sozinho.
 6. **Deploy.** Abra o domínio, entre com benati@ ou lucas@ e escolha o modo.
 
