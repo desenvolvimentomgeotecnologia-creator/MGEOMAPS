@@ -5,7 +5,9 @@ const Database = require('better-sqlite3');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new Database(path.join(DATA_DIR, 'mgeo.db'));
+let db;
+try { db = new Database(path.join(DATA_DIR, 'mgeo.db')); }
+catch (e) { console.error(`[MGEO] Não consegui abrir o banco em ${DATA_DIR}: ${e.message}. Confira a montagem do volume em /data e as permissões.`); process.exit(1); }
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
