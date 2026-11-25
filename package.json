@@ -1,0 +1,14 @@
+{
+  "name": "mgeo-pdf",
+  "version": "2.0.0",
+  "private": true,
+  "description": "MGEO PDF – leitor de GeoPDF com login, painel gerencial e uso offline",
+  "main": "server/server.js",
+  "scripts": { "start": "node server/server.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "better-sqlite3": "11.7.0",
+    "express": "4.21.2",
+    "nodemailer": "6.9.16"
+  }
+}

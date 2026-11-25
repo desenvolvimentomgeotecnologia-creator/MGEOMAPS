@@ -1,60 +1,63 @@
-# MGEO PDF – com login, painel ADM e fundo offline
+# MGEO PDF 2.0 – login, modo gerencial e uso offline
 
-Leitor de GeoPDF gratuito, com GPS em tempo real, login por WhatsApp, painel ADM master e fundo do Google baixável para uso 100% offline.
+Aplicativo + servidor em um só projeto. O servidor guarda cadastros, acessos e estatísticas
+em um banco de dados (SQLite) e entrega o app. Os GeoPDFs continuam só no celular de cada usuário.
 
-## 1. Criar o servidor de login (Supabase, plano grátis)
+```
+server/     servidor (login, cadastro, senhas, estatísticas, API do modo gerencial)
+public/     o aplicativo (mapa, GPS, login, modo gerencial)
+Dockerfile  pronto para o EasyPanel
+```
 
-1. Crie uma conta em **supabase.com** e um projeto novo (região: São Paulo).
-2. Vá em **SQL Editor**, cole todo o arquivo `supabase/schema.sql` e clique em **Run**.
-   Ele cria o banco, as regras de segurança, a regra do lead quente e define os dois ADMs master
-   (benati@ e lucas@mgeotecnologia.com).
-3. **Authentication → Sign In / Providers**
-   - **Email:** ligado. Desligue **Confirm email** (para os logins criados pelo ADM entrarem na hora).
-   - **Phone:** ligado. Provedor **Twilio Verify**. Ele envia o código pelo WhatsApp sem configuração extra.
-     Cole o Account SID, o Auth Token e o Verify Service SID da sua conta Twilio.
-   - Para testar sem gastar: em Phone, cadastre **números de teste** com código fixo.
-4. **Authentication → Users → Add user → Create new user**
-   - Crie `benati@mgeotecnologia.com` com a senha combinada e marque **Auto Confirm User**.
-   - Repita para `lucas@mgeotecnologia.com`.
-   - Os dois viram ADM master sozinhos. A senha **não** fica em nenhum arquivo do app.
-5. **Project Settings → API**: copie **Project URL** e a chave **anon public** para o arquivo `config.js`.
+## Publicar no EasyPanel (recomendado)
 
-## 2. Publicar
+1. **GitHub:** crie um repositório **privado** (ex.: `mgeo-pdf`) e envie esta pasta.
+   O `.gitignore` já impede que senhas e o banco de dados subam.
+2. **EasyPanel → seu projeto → + Service → App**
+   - **Source:** GitHub → escolha o repositório → branch `main`.
+   - **Build:** Dockerfile (o EasyPanel detecta sozinho).
+3. **Environment** (variáveis): copie do `.env.example` e preencha:
+   - `ADMIN_SEED_PASSWORD` = senha inicial dos ADMs benati@ e lucas@ (use uma senha forte).
+   - `SMTP_*` = dados do e-mail da empresa, para o “Esqueci minha senha” funcionar.
+4. **Mounts → Add Volume:** nome `mgeo-data`, caminho **`/data`**.
+   ⚠️ Sem isso, o banco de dados é apagado a cada atualização.
+5. **Domains:** adicione o domínio (ex.: `pdf.mgeotecnologia.com`), porta **3000**.
+   O EasyPanel gera o HTTPS sozinho.
+6. **Deploy.** Abra o domínio, entre com benati@ ou lucas@ e escolha o modo.
 
-Suba a pasta inteira no GitHub Pages (ou Netlify). Abra o link no celular e instale:
-- **iPhone (Safari):** Compartilhar → *Adicionar à Tela de Início*.
-- **Android (Chrome):** *Instalar app*.
+Para atualizar depois: envie as mudanças ao GitHub e clique em **Deploy** (ou ligue o auto deploy).
 
-## 3. Como funciona
+## Rodar no computador (teste)
 
-**Cadastro (cliente):** nome, WhatsApp validado por código, perfil, função, município/UF e aceite LGPD.
-Depois, no app (Meu perfil): empresa, área e serviços de interesse.
+```
+npm install
+ADMIN_SEED_PASSWORD=TesteForte123 npm start
+```
+Abra http://localhost:3000
 
-**Lead quente:** usina/fornecedor + gerente/supervisor + acima de 5.000 ha.
-Aparece no topo do Painel ADM com o prazo de 48 h para ligar; fica vermelho quando atrasa.
+## O que tem
 
-**Painel ADM** (toque nas suas iniciais → Painel ADM):
-- Usuários: buscar, filtrar, liberar, bloquear, marcar contatado, tornar ADM, abrir WhatsApp.
-- Novo login: cria e-mail + senha já liberado (cliente ou ADM).
-- Ajustes: liberar cadastros automaticamente ou só com aprovação; exportar leads em CSV (Excel).
+- **Splash com o logo MGEO** ao abrir.
+- **Login** com e-mail e senha, **Esqueci minha senha** (código de 6 números por e-mail) e
+  **Criar conta**: nome, e-mail, senha, WhatsApp, perfil, função, município/UF,
+  “Onde conheceu o MGEO PDF?”, aceite dos **Termos de Uso** e autorização de contato (LGPD).
+- **ADM ao entrar escolhe:** Modo gerencial ou Modo MGEO PDF (e pode trocar a qualquer hora).
+- **Modo gerencial:** usuários, novos cadastros, ativos por dia/semana/mês, acessos, tempo de uso,
+  mapas importados, downloads offline, origem dos usuários, perfil, função, área, estados,
+  municípios, aparelhos, últimos acessos, ranking de uso, leads quentes com prazo de 48 h,
+  ficha de cada pessoa com WhatsApp/ligar/e-mail, anotações da equipe comercial,
+  liberar/bloquear, tornar ADM, gerar nova senha, excluir dados (LGPD) e exportar para Excel.
+- **Offline:** depois do primeiro login, abre sem internet por até 30 dias. O uso feito offline
+  é guardado e enviado ao servidor quando a internet volta.
 
-**Offline:** depois do primeiro login com internet, o app abre sem sinal por até 30 dias seguidos
-(ajuste `offlineDays` no `config.js`). Quando a internet volta, ele confere se o acesso continua liberado.
+## Antes de publicar
 
-**Fundo offline:** Camadas → *Baixar fundo para offline*. Escolha a área (GeoPDF aberto ou tela),
-o fundo (Satélite, Híbrido, Mapa) e o detalhe. O app mostra o tamanho em KB/MB antes de baixar
-(medido na hora) e lista as áreas baixadas com o espaço que cada uma ocupa.
+Preencha nos arquivos `public/termos.html` e `public/privacidade.html`:
+`[RAZÃO SOCIAL DA MGEO]`, `[CNPJ]`, `[ENDEREÇO COMPLETO]`, `[E-MAIL DE CONTATO DA MGEO]` e `[CIDADE/UF DA SEDE]`.
+Vale uma revisão do jurídico.
 
 ## Segurança
 
-- Cada cliente só enxerga os próprios dados; só ADMs ativos veem a lista. Isso é garantido pelo banco
-  (Row Level Security), não apenas pela tela.
-- Cliente não consegue se promover a ADM, se liberar ou mexer em dados de outros (testado).
-- Cadastro direto por e-mail fora do app fica *pendente* até um ADM liberar.
-- A chave `anon` no `config.js` é pública por natureza; quem protege os dados são as regras do banco.
-
-## Custos
-
-- Supabase: plano grátis atende bem no começo. Projetos grátis são pausados após um período sem uso.
-- Twilio (código no WhatsApp): cobra por verificação enviada.
-- Blocos do Google: verifique os termos de uso do Google Maps para uso comercial.
+Senhas com scrypt (nunca em texto), sessão em cookie HttpOnly/Secure, limite de tentativas de login,
+código de recuperação com validade de 15 min e 5 tentativas, proteção contra CSRF, cabeçalhos de
+segurança (CSP, HSTS, X-Frame-Options), checagem de ADM no servidor e nenhuma senha no código.
