@@ -23,6 +23,8 @@ Dockerfile  pronto para o EasyPanel
    ⚠️ Sem isso, o banco de dados é apagado a cada atualização.
 5. **Domains:** adicione o domínio (ex.: `pdf.mgeotecnologia.com`), porta **3000**.
    ⚠️ Se você definir a variável `PORT` (ex.: 80), o domínio precisa usar essa mesma porta.
+   Também funciona num caminho do domínio do portal: `https://portalmgeo.com.br/mgeopdf` →
+   `http://bots_mgeopdf:80/` (o prefixo `/mgeopdf` é tratado pelo app; outro prefixo: variável `BASE_PATH`).
    O EasyPanel gera o HTTPS sozinho.
 6. **Deploy.** Abra o domínio, entre com benati@ ou lucas@ e escolha o modo.
 

@@ -1,5 +1,5 @@
 /* MGEO PDF – service worker: app 100% offline */
-const VERSION = 'mgeo-pdf-v8';
+const VERSION = 'mgeo-pdf-v9';
 const SHELL_CACHE = VERSION + '-app';
 const TILE_CACHE = 'mgeo-tiles-v1';
 const SHELL = [
@@ -31,7 +31,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   // downloads do botão "Baixar fundo" (cors) vão direto: o app guarda no IndexedDB
   if (isTile(url)) { if (req.mode !== 'cors') e.respondWith(tile(req)); return; }
-  if (url.origin === self.location.origin && !url.pathname.startsWith('/api/')) e.respondWith(app(req, e));
+  if (url.origin === self.location.origin && !url.pathname.startsWith(new URL('api/', self.registration.scope).pathname)) e.respondWith(app(req, e));
 });
 
 // Blocos do Google: o app guarda no IndexedDB (botão "Baixar fundo para offline").

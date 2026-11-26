@@ -29,7 +29,7 @@
   async function api(path, opt = {}){
     let r;
     try {
-      r = await fetch('/api' + path, { method:opt.method || 'GET', credentials:'same-origin', keepalive:!!opt.keepalive,
+      r = await fetch('api' + path, { method:opt.method || 'GET', credentials:'same-origin', keepalive:!!opt.keepalive,
         headers:{ 'Content-Type':'application/json', 'X-MGEO':'1' }, body: opt.body ? JSON.stringify(opt.body) : undefined });
     } catch(e){ e.net = true; throw e; }
     let data = {}; try { data = await r.json(); } catch(_){}

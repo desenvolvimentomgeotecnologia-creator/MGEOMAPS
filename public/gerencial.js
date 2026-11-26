@@ -167,7 +167,7 @@
       <div class="u-tools">
         <input class="input" id="gSearch" placeholder="Buscar por nome, e-mail, WhatsApp, empresa ou cidade" value="${h(busca)}">
         <select class="input g-ord" id="gOrd"><option value="recentes">Mais recentes</option><option value="acesso">Último acesso</option><option value="uso">Mais uso</option><option value="nome">Nome (A–Z)</option></select>
-        <a class="btn btn-ghost" href="/api/admin/export.csv" download>⬇ Exportar Excel (CSV)</a>
+        <a class="btn btn-ghost" href="api/admin/export.csv" download>⬇ Exportar Excel (CSV)</a>
       </div>
       <div class="chips filters" id="gFil">${[['todos','Todos'],['quentes','🔥 Quentes a ligar'],['novos','Novos (7 dias)'],['semcontato','Sem contato comercial'],['pendentes','Pendentes'],['bloqueados','Bloqueados'],['adm','ADMs']]
         .map(([k, v]) => `<button data-f="${k}" class="${filtro === k ? 'sel' : ''}">${v} <small class="num">${cnt(k)}</small></button>`).join('')}</div>
@@ -308,7 +308,7 @@
       ${card('Cadastros', `<div class="row"><div>Liberar novos cadastros automaticamente<small>Desligado: cada conta nova fica pendente até um ADM liberar</small></div>
         <label class="switch"><input type="checkbox" id="cfAuto" ${cfg.auto_aprovar ? 'checked' : ''}><span></span></label></div>
         <div class="row"><div>Recuperação de senha por e-mail<small>${cfg.email_configurado ? 'Ligada: o cliente recebe o código no e-mail' : 'Desligada: configure o SMTP no servidor. Até lá, gere a senha pelo painel.'}</small></div><span class="tag ${cfg.email_configurado ? 'ok' : 'pend'}">${cfg.email_configurado ? 'Ativa' : 'Inativa'}</span></div>
-        <a class="btn btn-ghost" href="/api/admin/export.csv" download style="margin-top:12px">⬇ Exportar todos os usuários (CSV)</a>`)}
+        <a class="btn btn-ghost" href="api/admin/export.csv" download style="margin-top:12px">⬇ Exportar todos os usuários (CSV)</a>`)}
       ${card('Criar usuário', `<p class="hint">O usuário entra com o e-mail e a senha gerada e pode trocá-la em Minha conta.</p>
         <label class="field"><span>Nome completo</span><input class="input" id="nwNome" maxlength="80"></label>
         <label class="field"><span>E-mail</span><input class="input" id="nwMail" type="email" maxlength="190"></label>

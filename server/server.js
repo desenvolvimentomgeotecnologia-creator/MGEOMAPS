@@ -140,6 +140,15 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
+// O app também abre num caminho do domínio (ex.: portalmgeo.com.br/mgeopdf): o EasyPanel repassa o
+// caminho inteiro, então o prefixo é tirado aqui. BASE_PATH muda o prefixo; BASE_PATH= (vazio) desliga.
+const BASE = String(process.env.BASE_PATH ?? '/mgeopdf').trim().replace(/\/+$/, '');
+if (BASE) app.use((req, res, next) => {
+  if (req.path === BASE) return res.redirect(301, BASE + '/' + req.url.slice(BASE.length)); // /mgeopdf -> /mgeopdf/
+  if (req.url.startsWith(BASE + '/')) req.url = req.url.slice(BASE.length) || '/';
+  next();
+});
+
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",
