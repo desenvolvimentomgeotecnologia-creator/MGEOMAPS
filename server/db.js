@@ -82,6 +82,11 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT OR IGNORE INTO config (chave, valor) VALUES ('auto_aprovar', '1');
 `);
 
+// colunas novas (bancos já existentes ganham a coluna sem perder dados)
+const colunas = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
+if (!colunas.includes('portal_id')) db.exec('ALTER TABLE users ADD COLUMN portal_id TEXT');       // id do usuário no Portal MGEO
+if (!colunas.includes('portal_papel')) db.exec('ALTER TABLE users ADD COLUMN portal_papel TEXT'); // papel no portal no último login
+
 const getConfig = k => { const r = db.prepare('SELECT valor FROM config WHERE chave = ?').get(k); return r ? r.valor : null; };
 const setConfig = (k, v) => db.prepare('INSERT INTO config (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor').run(k, String(v));
 

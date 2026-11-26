@@ -1,5 +1,5 @@
 /* MGEO PDF – service worker: app 100% offline */
-const VERSION = 'mgeo-pdf-v7';
+const VERSION = 'mgeo-pdf-v8';
 const SHELL_CACHE = VERSION + '-app';
 const TILE_CACHE = 'mgeo-tiles-v1';
 const SHELL = [

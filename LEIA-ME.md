@@ -42,6 +42,15 @@ Abra http://localhost:3000
 - **Login** com e-mail e senha, **Esqueci minha senha** (código de 6 números por e-mail) e
   **Criar conta**: nome, e-mail, senha, WhatsApp, perfil, função, município/UF,
   “Onde conheceu o MGEO PDF?”, aceite dos **Termos de Uso** e autorização de contato (LGPD).
+- **Login do Portal MGEO:** quem tem usuário ativo no Portal MGEO entra com o mesmo e-mail e a
+  mesma senha do portal (conferidos no Supabase do portal, como no serviço de mapas dos clientes).
+  - Papéis **admin** e **comercial** do portal entram no **modo gerencial**; os outros, só no MGEO PDF.
+    Mude com a variável `PAPEIS_GERENCIAL` (ex.: `admin,comercial,gestor`).
+  - Usuário inativo ou excluído no portal não entra.
+  - Na primeira entrada pelo portal, a pessoa ganha (ou tem vinculado pelo e-mail) um cadastro no
+    MGEO PDF, para as estatísticas. A partir daí vale só a senha do portal, que se troca no portal.
+  - No log aparece `[MGEO] login pelo Portal MGEO: email (papel ...)`.
+  - O “Criar conta” do app continua aberto para quem não tem usuário no portal.
 - **ADM ao entrar escolhe:** Modo gerencial ou Modo MGEO PDF (e pode trocar a qualquer hora).
 - **Modo gerencial:** usuários, novos cadastros, ativos por dia/semana/mês, acessos, tempo de uso,
   mapas importados, downloads offline, origem dos usuários, perfil, função, área, estados,

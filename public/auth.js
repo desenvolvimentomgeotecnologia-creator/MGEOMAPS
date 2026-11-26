@@ -72,7 +72,7 @@
 
   const routes = {
     login(){
-      view(`<h2>Entrar</h2><p class="sub">Use o e-mail e a senha do seu cadastro.</p>
+      view(`<h2>Entrar</h2><p class="sub">Use o e-mail e a senha do seu cadastro no MGEO PDF ou do Portal MGEO.</p>
         <label class="field"><span>E-mail</span><input class="input" id="liMail" type="email" inputmode="email" autocomplete="username" maxlength="190"></label>
         ${passField('liPass', 'Senha', 'current-password')}
         <div class="err" id="liErr"></div>
@@ -94,6 +94,7 @@
     },
     forgot(){
       view(`${back('login')}<h2>Recuperar senha</h2><p class="sub">Digite o e-mail do cadastro. Vamos enviar um código de 6 números para criar uma nova senha.</p>
+        <p class="sub">Entra com o usuário do Portal MGEO? Recupere a senha no <a href="https://portalmgeo.com.br/" target="_blank" rel="noopener">Portal MGEO</a>.</p>
         <label class="field"><span>E-mail</span><input class="input" id="fgMail" type="email" inputmode="email" autocomplete="username" maxlength="190"></label>
         <div class="err" id="fgErr"></div>
         <button class="btn btn-primary wide" id="fgGo">Enviar código</button>`);
@@ -350,9 +351,9 @@
         <div class="err" id="meErr"></div>
         <button class="btn btn-primary wide" id="meSave" ${off ? 'disabled' : ''}>${off ? 'Conecte-se para salvar' : 'Salvar'}</button>
         <div class="label">Segurança</div>
-        <details class="pw"><summary>Trocar senha</summary>
+        ${u.portal ? `<p class="hint">Você entra com o usuário do Portal MGEO. Para trocar a senha, use o <a href="https://portalmgeo.com.br/" target="_blank" rel="noopener">Portal MGEO</a>.</p>` : `<details class="pw"><summary>Trocar senha</summary>
           ${['pwOld:Senha atual:current-password', 'pwNew:Nova senha:new-password'].map(x => { const [id, l, ac] = x.split(':'); return `<label class="field"><span>${l}</span><input class="input" id="${id}" type="password" autocomplete="${ac}" maxlength="128"></label>`; }).join('')}
-          <div class="err" id="pwErr"></div><button class="btn btn-ghost wide" id="pwGo" ${off ? 'disabled' : ''}>Salvar nova senha</button></details>
+          <div class="err" id="pwErr"></div><button class="btn btn-ghost wide" id="pwGo" ${off ? 'disabled' : ''}>Salvar nova senha</button></details>`}
         <button class="row row-btn" id="meOut"><div>Sair desta conta<small>Seus mapas continuam salvos neste aparelho</small></div></button>
         <p class="hint" style="margin-top:12px"><button class="link inline" data-doc="termos.html">Termos de Uso</button> · <button class="link inline" data-doc="privacidade.html">Privacidade</button></p>
       </div>`;
@@ -370,7 +371,7 @@
       try { const r = await api('/me', { method:'PATCH', body }); A.user = r.user; writeCache(r.user); paintMe(); toast('Dados salvos. Obrigado!'); closeSheets(); }
       catch(e){ err.textContent = msg(e); btn.disabled = false; }
     };
-    q('#pwGo').onclick = async () => {
+    if (q('#pwGo')) q('#pwGo').onclick = async () => {
       const err = q('#pwErr'); err.textContent = '';
       try { await api('/auth/password', { method:'POST', body:{ atual:q('#pwOld').value, nova:q('#pwNew').value } }); toast('Senha alterada'); q('#pwOld').value = q('#pwNew').value = ''; q('.pw').open = false; }
       catch(e){ err.textContent = msg(e); }

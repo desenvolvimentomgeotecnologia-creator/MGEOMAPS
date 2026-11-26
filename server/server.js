@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const nodemailer = require('nodemailer');
 const { db, getConfig, setConfig } = require('./db');
+const portal = require('./portal');
 
 const PORT = +process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -18,6 +19,8 @@ const AREAS = ['ate_500', '500_1000', '1000_5000', '5000_20000', 'acima_20000'];
 const ORIGENS = ['indicacao', 'equipe_mgeo', 'instagram', 'whatsapp', 'google', 'linkedin', 'youtube', 'evento', 'outro'];
 const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ');
 const EVENTOS = ['app_open', 'map_import', 'map_open', 'gps_on', 'offline_download', 'modo'];
+// ADMs fixos: continuam ADM mesmo que o papel no portal mude
+const ADMINS_FIXOS = (process.env.ADMIN_EMAILS || 'benati@mgeotecnologia.com,lucas@mgeotecnologia.com').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 /* ---------- utilidades ---------- */
 const now = () => new Date().toISOString();
@@ -74,7 +77,7 @@ function publico(u){
   return {
     id: u.id, nome: u.nome, email: u.email, whatsapp: u.whatsapp, perfil: u.perfil, funcao: u.funcao, uf: u.uf,
     municipio: u.municipio, empresa: u.empresa, area_faixa: u.area_faixa, interesses: JSON.parse(u.interesses || '[]'),
-    origem: u.origem, role: u.role, status: u.status, criado_em: u.criado_em
+    origem: u.origem, role: u.role, status: u.status, criado_em: u.criado_em, portal: !!u.portal_id
   };
 }
 function logEvento(userId, tipo, req, meta, em){
@@ -201,14 +204,49 @@ api.post('/auth/register', (req, res) => {
   res.json({ user: publico(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
 });
 
-/* entrar */
-api.post('/auth/login', (req, res) => {
+/* usuário do Portal MGEO: cria ou atualiza o cadastro local (estatísticas, modo gerencial) */
+function vinculaPortal(p, req){
+  const ger = portal.gerencial(p.papel), fixo = ADMINS_FIXOS.includes(p.email);
+  let u = db.prepare('SELECT * FROM users WHERE portal_id = ?').get(p.id) || db.prepare('SELECT * FROM users WHERE email = ?').get(p.email);
+  if (!u){
+    const nome = p.nome || p.email.split('@')[0].replace(/[._-]+/g, ' ').replace(/(^|\s)\S/g, c => c.toUpperCase());
+    const r = db.prepare(`INSERT INTO users (nome, email, senha_hash, role, status, origem, criado_por, portal_id, portal_papel)
+        VALUES (?, ?, ?, ?, 'ativo', 'equipe_mgeo', 'portal', ?, ?)`)
+      .run(nome, p.email, hashSenha(senhaTemporaria()), ger || fixo ? 'admin' : 'cliente', p.id, p.papel);
+    logEvento(r.lastInsertRowid, 'cadastro', req, { origem: 'portal', papel: p.papel });
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid);
+  }
+  let role = u.role;
+  if (ger) role = 'admin';
+  else if (role === 'admin' && !fixo && portal.gerencial(u.portal_papel)) role = 'cliente'; // perdeu admin/comercial no portal
+  if (!u.portal_id){
+    // primeira vez pelo portal: a senha local antiga deixa de valer (vale a do portal) e as sessões antigas caem
+    db.prepare('UPDATE users SET senha_hash = ? WHERE id = ?').run(hashSenha(senhaTemporaria()), u.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
+  }
+  db.prepare(`UPDATE users SET portal_id = ?, portal_papel = ?, role = ?, status = CASE WHEN status = 'pendente' THEN 'ativo' ELSE status END WHERE id = ?`)
+    .run(p.id, p.papel, role, u.id);
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(u.id);
+}
+
+/* entrar: primeiro o cadastro do MGEO PDF; se não bater, o login do Portal MGEO */
+api.post('/auth/login', async (req, res) => {
   const email = str((req.body || {}).email, 190).toLowerCase(), senha = (req.body || {}).senha;
   if (!limite('li:' + ip(req) + email, 8, 15 * 60e3) || !limite('lip:' + ip(req), 60, 15 * 60e3))
     return res.status(429).json({ erro: 'Muitas tentativas. Aguarde 15 minutos ou recupere a senha.' });
-  const u = email ? db.prepare('SELECT * FROM users WHERE email = ?').get(email) : null;
+  let u = email ? db.prepare('SELECT * FROM users WHERE email = ?').get(email) : null;
   const ok = confereSenha(senha || '', u ? u.senha_hash : HASH_FALSO) && !!u;
-  if (!ok) return res.status(401).json({ erro: 'E-mail ou senha incorretos.' });
+  if (!ok){
+    const p = emailOk(email) && typeof senha === 'string' ? await portal.entrar(email, senha.slice(0, 128)) : { ok: false };
+    if (!p.ok){
+      if (p.falha) console.warn(`[MGEO] login pelo Portal MGEO não conferido (${email}): ${p.motivo}`);
+      if (p.inativo) return res.status(403).json({ erro: 'Seu usuário está inativo no Portal MGEO. Fale com a equipe MGEO.', code: 'bloqueado' });
+      if (p.falha) return res.status(502).json({ erro: 'Não consegui conferir seu login no Portal MGEO agora. Tente de novo em instantes.' });
+      return res.status(401).json({ erro: 'E-mail ou senha incorretos.' });
+    }
+    u = vinculaPortal(p, req);
+    console.log(`[MGEO] login pelo Portal MGEO: ${p.email} (papel ${p.papel || '-'}${u.role === 'admin' ? ', modo gerencial' : ''})`);
+  }
   if (u.status === 'bloqueado') return res.status(403).json({ erro: 'Seu acesso está bloqueado. Fale com a equipe MGEO.', code: 'bloqueado' });
   if (u.status === 'pendente') return res.status(403).json({ erro: 'Seu cadastro está em análise. Você será avisado quando for liberado.', code: 'pendente' });
   db.prepare('UPDATE users SET ultimo_acesso = ?, total_acessos = total_acessos + 1 WHERE id = ?').run(now(), u.id);
@@ -231,7 +269,7 @@ api.post('/auth/forgot', async (req, res) => {
   if (!mailer) return res.status(503).json({ erro: 'Recuperação por e-mail indisponível. Fale com a equipe MGEO para redefinir sua senha.', code: 'sem_email' });
   if (!limite('fg:' + email, 3, 3600e3) || !limite('fgip:' + ip(req), 15, 3600e3)) return res.status(429).json({ erro: 'Muitos pedidos. Tente de novo em 1 hora.' });
   const u = emailOk(email) ? db.prepare('SELECT * FROM users WHERE email = ?').get(email) : null;
-  if (u && u.status !== 'bloqueado'){
+  if (u && u.status !== 'bloqueado' && !u.portal_id){ // usuário do portal recupera a senha no próprio portal
     const codigo = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     db.prepare('UPDATE resets SET usado = 1 WHERE user_id = ?').run(u.id);
     db.prepare('INSERT INTO resets (user_id, code_hash, expira_em) VALUES (?, ?, ?)').run(u.id, sha256(u.id + ':' + codigo), new Date(Date.now() + 15 * 60e3).toISOString());
@@ -270,6 +308,7 @@ api.post('/auth/reset', (req, res) => {
 
 api.post('/auth/password', auth, (req, res) => {
   const b = req.body || {};
+  if (req.user.portal_id) return res.status(400).json({ erro: 'Sua senha é a mesma do Portal MGEO. Para trocar, use o portal.' });
   if (!confereSenha(b.atual || '', req.user.senha_hash)) return res.status(400).json({ erro: 'Senha atual incorreta.' });
   if (!senhaOk(b.nova)) return res.status(400).json({ erro: 'A nova senha precisa ter 8 caracteres ou mais, com letras e números.' });
   db.prepare('UPDATE users SET senha_hash = ? WHERE id = ?').run(hashSenha(b.nova), req.user.id);
@@ -479,7 +518,7 @@ app.get('/', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
 
 /* ADMs iniciais (senha vem da variável de ambiente, nunca do código) */
 (function seed(){
-  const emails = (process.env.ADMIN_EMAILS || 'benati@mgeotecnologia.com,lucas@mgeotecnologia.com').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const emails = ADMINS_FIXOS;
   const pass = process.env.ADMIN_SEED_PASSWORD;
   for (const e of emails){
     const u = db.prepare('SELECT * FROM users WHERE email = ?').get(e);
